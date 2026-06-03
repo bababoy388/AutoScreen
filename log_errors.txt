@@ -1,0 +1,1 @@
+[2026-06-03 15:07:54] Ошибка отправки сообщения: HTTPSConnectionPool(host='api.telegram.org', port=443): Max retries exceeded with url: /bot8868540047:AAFiUfedDuiUqLBbjoyYBlMh3stXiFfSweI/sendMessage (Caused by ConnectTimeoutError(<HTTPSConnection(host='api.telegram.org', port=443) at 0x2ab6fd69090>, 'Connection to api.telegram.org timed out. (connect timeout=15)'))
