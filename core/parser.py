@@ -40,7 +40,7 @@ class Parser:
             "to": self.to_time
         }
         try:
-            resp = retry_request(lambda: requests.get(url, params=params, timeout=30))
+            resp = retry_request(lambda: requests.get(url, params=params))
             resp.raise_for_status()
             data = resp.json()
             return data["fileName"]
@@ -53,7 +53,7 @@ class Parser:
         url = (f"http://{self.download_host}:{self.download_port}"
                f"/api/RawData/download?fileName={encoded_name}")
         try:
-            resp = retry_request(lambda: requests.get(url, timeout=30))
+            resp = retry_request(lambda: requests.get(url))
             resp.raise_for_status()
             return io.BytesIO(resp.content)
         except Exception as e:
