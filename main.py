@@ -82,7 +82,10 @@ def main():
                     df = parser.get_dataframe()
 
                     if df.empty:
-                        msg_text = f"Нет данных для {mill_uuid} за период [{parser.from_time} — {parser.to_time}]"
+                        from_local_str = parser.from_local.strftime('%Y-%m-%d %H:%M')
+                        to_local_str = parser.to_local.strftime('%Y-%m-%d %H:%M')
+                        time_range = f"[{from_local_str} - {to_local_str}]"
+                        msg_text = f"Нет данных для {mill_uuid} за период {time_range}"
                         if sender:
                             sender.send_message(msg_text)
                         else:
@@ -97,7 +100,7 @@ def main():
                                 if saved_path and sender:
                                     from_local_str = parser.from_local.strftime('%Y-%m-%d %H:%M')
                                     to_local_str = parser.to_local.strftime('%Y-%m-%d %H:%M')
-                                    time_range = f"[{from_local_str} — {to_local_str}]"
+                                    time_range = f"[{from_local_str} - {to_local_str}]"
                                     msg = config.get(section, 'msg', fallback='').strip()
                                     caption = f"{time_range} {msg}" if msg else time_range
                                     sender.send_photo(saved_path, caption=caption)
@@ -107,7 +110,7 @@ def main():
                             if saved_path and sender:
                                 from_local_str = parser.from_local.strftime('%Y-%m-%d %H:%M')
                                 to_local_str = parser.to_local.strftime('%Y-%m-%d %H:%M')
-                                time_range = f"[{from_local_str} — {to_local_str}]"
+                                time_range = f"[{from_local_str} - {to_local_str}]"
                                 msg = config.get(section, 'msg', fallback='').strip()
                                 caption = f"{time_range} {msg}" if msg else time_range
                                 sender.send_photo(saved_path, caption=caption)
