@@ -7,30 +7,36 @@ from core.tools import retry_request, log_error
 
 
 class Parser:
-    def __init__(self, mill_uuid,
-                 host_info, port_info,
-                 host_download, port_download,
-                 from_minutes, to_minutes):
+    def __init__(self, mill_uuid, host_info, port_info, host_download, port_download, from_minutes, to_minutes):
         self.mill_uuid = mill_uuid
         self.info_host = host_info
         self.info_port = port_info
         self.download_host = host_download
         self.download_port = port_download
 
-        self.from_time, self.to_time = self._compute_time_range(from_minutes, to_minutes)
+        self.from_time, self.to_time, self.from_local, self.to_local = self._compute_time_range(from_minutes,
+                                                                                                to_minutes)
+
+    def get_pretty_time_range(self):
+        return (self.from_local.strftime('%Y-%m-%d %H:%M'),
+                self.to_local.strftime('%Y-%m-%d %H:%M'))
 
     @staticmethod
     def _compute_time_range(from_minutes, to_minutes):
         local_now = datetime.now().astimezone()
         from_dt = local_now + timedelta(minutes=from_minutes)
         to_dt = local_now + timedelta(minutes=to_minutes)
+
+        from_local = from_dt
+        to_local = to_dt
+
         from_utc = from_dt.astimezone(timezone.utc)
         to_utc = to_dt.astimezone(timezone.utc)
 
         def fmt(dt):
             return dt.strftime('%Y-%m-%dT%H:%M:%S.') + f"{dt.microsecond // 1000:03d}Z"
 
-        return fmt(from_utc), fmt(to_utc)
+        return fmt(from_utc), fmt(to_utc), from_local, to_local
 
     def _get_zip_filename(self):
         url = f"http://{self.info_host}:{self.info_port}/api/ProcessedData/csv"

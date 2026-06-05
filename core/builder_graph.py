@@ -220,23 +220,28 @@ class PlotConfig:
         ax_right2 = None
         if right2_cols:
             ax_right2 = ax_left.twinx()
-            offset = 0.08
-            ax_right2.spines['right'].set_position(('axes', 1 + offset))
+            # Сдвигаем вторую правую ось дальше вправо
+            ax_right2.spines['right'].set_position(('axes', 1 + 0.08))
+            # Устанавливаем цвет подписи и меток, чтобы отличать
+            # (опционально, можно задать цвет из цветов)
+            if colors and len(colors) > len(left_cols) + len(right1_cols):
+                color2 = colors[len(left_cols) + len(right1_cols)]
+                ax_right2.tick_params(axis='y', labelcolor=color2)
+                ax_right2.yaxis.label.set_color(color2)
 
         # Рисуем левую ось
         color_idx = 0
         if left_cols:
-            c = colors[color_idx:color_idx+len(left_cols)] if colors else None
+            c = colors[color_idx:color_idx + len(left_cols)] if colors else None
             df[left_cols].plot(kind=kind, ax=ax_left, legend=False, color=c)
             color_idx += len(left_cols)
-        if left_cols:
-            left_ylabel = self.config.get(section, 'left_ylabel', fallback='')
-            if left_ylabel:
-                ax_left.set_ylabel(left_ylabel)
+        left_ylabel = self.config.get(section, 'left_ylabel', fallback='')
+        if left_ylabel:
+            ax_left.set_ylabel(left_ylabel)
 
         # Рисуем первую правую ось
         if right1_cols and ax_right1:
-            c = colors[color_idx:color_idx+len(right1_cols)] if colors else None
+            c = colors[color_idx:color_idx + len(right1_cols)] if colors else None
             df[right1_cols].plot(kind=kind, ax=ax_right1, legend=False, color=c)
             color_idx += len(right1_cols)
             right1_ylabel = self.config.get(section, 'right1_ylabel', fallback='')
@@ -247,11 +252,14 @@ class PlotConfig:
 
         # Рисуем вторую правую ось
         if right2_cols and ax_right2:
-            c = colors[color_idx:color_idx+len(right2_cols)] if colors else None
+            c = colors[color_idx:color_idx + len(right2_cols)] if colors else None
             df[right2_cols].plot(kind=kind, ax=ax_right2, legend=False, color=c)
             right2_ylabel = self.config.get(section, 'right2_ylabel', fallback='')
             if right2_ylabel:
                 ax_right2.set_ylabel(right2_ylabel)
+                # Принудительно делаем подпись и метки третьей оси чёрными
+                ax_right2.yaxis.label.set_color('black')
+                ax_right2.tick_params(axis='y', labelcolor='black')
 
         # Сборка легенды
         lines, labels = [], []
@@ -262,6 +270,9 @@ class PlotConfig:
                 labels.extend(lab)
         if lines:
             ax_left.legend(lines, labels, loc='best')
+
+        # Настройка отступов, чтобы подписи не обрезались
+        fig.tight_layout()
 
         if return_fig:
             return fig, ax_left

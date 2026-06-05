@@ -1,6 +1,7 @@
 import configparser
 import time
 from datetime import datetime, timedelta
+from collections import defaultdict
 from core.parser import Parser
 from core.builder_graph import PlotConfig
 from core.telegram_sender import TelegramSender
@@ -21,65 +22,100 @@ def main():
 
     mode = config.get('Schedule', 'mode', fallback='once')
 
-    sample_section = None
-    for s in config.sections():
-        if s.startswith('Plot_'):
-            sample_section = s
-            break
-
-    if not sample_section:
-        log_error("Не найдено ни одной секции Plot_ в конфиге")
-        return
-
     WAIT_ON_ERROR = 60
 
     while True:
         try:
             iteration_start = time.monotonic()
 
-            parser = Parser(
-                mill_uuid=config.get(sample_section, 'millUuid'),
-                from_minutes=config.getint(sample_section, 'from_minutes'),
-                to_minutes=config.getint(sample_section, 'to_minutes'),
-                host_info=config.get(sample_section, 'info_host'),
-                port_info=config.get(sample_section, 'info_port'),
-                host_download=config.get(sample_section, 'download_host'),
-                port_download=config.get(sample_section, 'download_port')
-            )
+            # --- Группировка секций по источнику данных ---
+            groups = defaultdict(list)   # ключ -> список имён секций (Plot_* или Subplot_*)
 
-            df = parser.get_dataframe()
+            for section in config.sections():
+                if section.startswith('Plot_'):
+                    # Для Plot_ берём параметры напрямую
+                    key = (
+                        config.get(section, 'millUuid'),
+                        config.get(section, 'info_host'),
+                        config.get(section, 'info_port'),
+                        config.get(section, 'download_host'),
+                        config.get(section, 'download_port'),
+                        config.getint(section, 'from_minutes'),
+                        config.getint(section, 'to_minutes')
+                    )
+                    groups[key].append(section)
 
-            if df.empty:
-                msg_text = f"Нет данных за период [{parser.from_time} — {parser.to_time}]"
-                if sender:
-                    try:
-                        sender.send_message(msg_text)
-                    except Exception as e:
-                        log_error(f"Не удалось отправить сообщение о пустом DataFrame: {e}")
-                else:
-                    print(msg_text)
-            else:
-                for section in config.sections():
-                    if section.startswith('Plot_'):
-                        if config.getboolean(section, 'upload', fallback=True):
-                            saved_path = plotter.build_for_section(section, df)
+                elif section.startswith('Subplot_'):
+                    # Для Subplot_ берём первую секцию из списка sections
+                    sections_str = config.get(section, 'sections')
+                    # Берём первый элемент, обрезаем пробелы
+                    first_plot = sections_str.split(',')[0].strip()
+                    if config.has_section(first_plot):
+                        key = (
+                            config.get(first_plot, 'millUuid'),
+                            config.get(first_plot, 'info_host'),
+                            config.get(first_plot, 'info_port'),
+                            config.get(first_plot, 'download_host'),
+                            config.get(first_plot, 'download_port'),
+                            config.getint(first_plot, 'from_minutes'),
+                            config.getint(first_plot, 'to_minutes')
+                        )
+                        groups[key].append(section)
+                    else:
+                        log_error(f"Секция {first_plot} не найдена для сабплота {section}")
+
+            # --- Обработка каждой группы (загрузка данных и построение графиков) ---
+            for key, sections in groups.items():
+                mill_uuid, info_host, info_port, download_host, download_port, from_min, to_min = key
+
+                try:
+                    parser = Parser(
+                        mill_uuid=mill_uuid,
+                        from_minutes=from_min,
+                        to_minutes=to_min,
+                        host_info=info_host,
+                        port_info=info_port,
+                        host_download=download_host,
+                        port_download=download_port
+                    )
+
+                    df = parser.get_dataframe()
+
+                    if df.empty:
+                        msg_text = f"Нет данных для {mill_uuid} за период [{parser.from_time} — {parser.to_time}]"
+                        if sender:
+                            sender.send_message(msg_text)
+                        else:
+                            print(msg_text)
+                        continue
+
+                    # Обрабатываем все секции этой группы
+                    for section in sections:
+                        if section.startswith('Plot_'):
+                            if config.getboolean(section, 'upload', fallback=True):
+                                saved_path = plotter.build_for_section(section, df)
+                                if saved_path and sender:
+                                    from_local_str = parser.from_local.strftime('%Y-%m-%d %H:%M')
+                                    to_local_str = parser.to_local.strftime('%Y-%m-%d %H:%M')
+                                    time_range = f"[{from_local_str} — {to_local_str}]"
+                                    msg = config.get(section, 'msg', fallback='').strip()
+                                    caption = f"{time_range} {msg}" if msg else time_range
+                                    sender.send_photo(saved_path, caption=caption)
+                        elif section.startswith('Subplot_'):
+                            # Для сабплота параметр upload не предусмотрен, всегда отправляем если сохранилось
+                            saved_path = plotter.build_subplot(section, df)
                             if saved_path and sender:
-                                time_range = f"[{parser.from_time} — {parser.to_time}]"
+                                from_local_str = parser.from_local.strftime('%Y-%m-%d %H:%M')
+                                to_local_str = parser.to_local.strftime('%Y-%m-%d %H:%M')
+                                time_range = f"[{from_local_str} — {to_local_str}]"
                                 msg = config.get(section, 'msg', fallback='').strip()
                                 caption = f"{time_range} {msg}" if msg else time_range
                                 sender.send_photo(saved_path, caption=caption)
-                        else:
-                            pass
 
-                for section in config.sections():
-                    if section.startswith('Subplot_'):
-                        saved_path = plotter.build_subplot(section, df)
-                        if saved_path and sender:
-                            time_range = f"[{parser.from_time} — {parser.to_time}]"
-                            msg = config.get(section, 'msg', fallback='').strip()
-                            caption = f"{time_range} {msg}" if msg else time_range
-                            sender.send_photo(saved_path, caption=caption)
+                except Exception as e:
+                    log_error(f"Ошибка при обработке группы {key}: {e}")
 
+            # --- Управление расписанием ---
             if mode == 'once':
                 break
             elif mode == 'daily':
