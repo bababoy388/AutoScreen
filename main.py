@@ -80,12 +80,14 @@ def main():
                     )
 
                     df = parser.get_dataframe()
+                    first_section = sections[0]
+                    mill_name = config.get(first_section, 'msg', fallback=mill_uuid).strip() or mill_uuid
 
                     if df.empty:
                         from_local_str = parser.from_local.strftime('%Y-%m-%d %H:%M')
                         to_local_str = parser.to_local.strftime('%Y-%m-%d %H:%M')
                         time_range = f"[{from_local_str} - {to_local_str}]"
-                        msg_text = f"Нет данных для {mill_uuid} за период {time_range}"
+                        msg_text = f"Нет данных для {mill_name} за период {time_range}"
                         if sender:
                             sender.send_message(msg_text)
                         else:
