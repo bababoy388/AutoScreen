@@ -1,39 +1,57 @@
 import configparser
 import time
+import threading
+import asyncio
 from datetime import datetime, timedelta
 from collections import defaultdict
+
 from core.parser import Parser
 from core.builder_graph import PlotConfig
 from core.telegram_sender import TelegramSender
 from core.tools import log_error
 
+# Импортируем объекты aiogram из вашего bot_polling.py
+from core.bot_polling import dp, bot
 
+# ------------------------------------------------------------
+# Функция для запуска поллинга в отдельном потоке
+# ------------------------------------------------------------
+def run_aiogram_polling():
+    asyncio.run(dp.start_polling(bot))
+
+# ------------------------------------------------------------
+# Основной цикл
+# ------------------------------------------------------------
 def main():
-    config = configparser.ConfigParser(interpolation=None)
-    config.read('config.ini', encoding='utf-8')
-    plotter = PlotConfig('config.ini')
-
-    sender = None
-    token = config.get('Telegram', 'token')
-    chat_id = config.get('Telegram', 'chat_id')
-    proxy_raw = config.get('Telegram', 'proxy', fallback=None)
-    proxy = proxy_raw.strip() if proxy_raw else None
-    sender = TelegramSender(token, chat_id, proxy)
-
-    mode = config.get('Schedule', 'mode', fallback='once')
-
     WAIT_ON_ERROR = 60
+
+    # Запускаем aiogram в фоновом потоке (daemon=True – завершится вместе с основным)
+    polling_thread = threading.Thread(target=run_aiogram_polling, daemon=True)
+    polling_thread.start()
+    print("✅ Aiogram поллинг запущен в фоновом потоке")
 
     while True:
         try:
             iteration_start = time.monotonic()
 
-            # --- Группировка секций по источнику данных ---
-            groups = defaultdict(list)   # ключ -> список имён секций (Plot_* или Subplot_*)
+            # --- 1. Перечитываем конфиг (чтобы видеть изменения от команд) ---
+            config = configparser.ConfigParser(interpolation=None)
+            config.read('config.ini', encoding='utf-8')
 
+            # --- 2. Инициализация отправителя (токен/прокси из конфига) ---
+            token = config.get('Telegram', 'token')
+            chat_id = config.get('Telegram', 'chat_id')
+            proxy_raw = config.get('Telegram', 'proxy', fallback=None)
+            proxy = proxy_raw.strip() if proxy_raw else None
+            sender = TelegramSender(token, chat_id, proxy)
+
+            # --- 3. Режим работы ---
+            mode = config.get('Schedule', 'mode', fallback='once')
+
+            # --- 4. Группировка секций (как у вас было) ---
+            groups = defaultdict(list)
             for section in config.sections():
                 if section.startswith('Plot_'):
-                    # Для Plot_ берём параметры напрямую
                     key = (
                         config.get(section, 'millUuid'),
                         config.get(section, 'info_host'),
@@ -44,11 +62,8 @@ def main():
                         config.getint(section, 'to_minutes')
                     )
                     groups[key].append(section)
-
                 elif section.startswith('Subplot_'):
-                    # Для Subplot_ берём первую секцию из списка sections
                     sections_str = config.get(section, 'sections')
-                    # Берём первый элемент, обрезаем пробелы
                     first_plot = sections_str.split(',')[0].strip()
                     if config.has_section(first_plot):
                         key = (
@@ -64,7 +79,8 @@ def main():
                     else:
                         log_error(f"Секция {first_plot} не найдена для сабплота {section}")
 
-            # --- Обработка каждой группы (загрузка данных и построение графиков) ---
+            # --- 5. Обработка каждой группы (загрузка данных и построение графиков) ---
+            plotter = PlotConfig('config.ini')  # создаём заново с актуальным конфигом
             for key, sections in groups.items():
                 mill_uuid, info_host, info_port, download_host, download_port, from_min, to_min = key
 
@@ -88,10 +104,7 @@ def main():
                         to_local_str = parser.to_local.strftime('%Y-%m-%d %H:%M')
                         time_range = f"[{from_local_str} - {to_local_str}]"
                         msg_text = f"Нет данных для {mill_name} за период {time_range}"
-                        if sender:
-                            sender.send_message(msg_text)
-                        else:
-                            print(msg_text)
+                        sender.send_message(msg_text)
                         continue
 
                     # Обрабатываем все секции этой группы
@@ -107,7 +120,6 @@ def main():
                                     caption = f"{time_range} {msg}" if msg else time_range
                                     sender.send_photo(saved_path, caption=caption)
                         elif section.startswith('Subplot_'):
-                            # Для сабплота параметр upload не предусмотрен, всегда отправляем если сохранилось
                             saved_path = plotter.build_subplot(section, df)
                             if saved_path and sender:
                                 from_local_str = parser.from_local.strftime('%Y-%m-%d %H:%M')
@@ -120,7 +132,8 @@ def main():
                 except Exception as e:
                     log_error(f"Ошибка при обработке группы {key}: {e}")
 
-            # --- Управление расписанием ---
+            # --- 6. Управление расписанием (с учётом изменённых параметров) ---
+            mode = config.get('Schedule', 'mode', fallback='once')
             if mode == 'once':
                 break
             elif mode == 'daily':
@@ -150,7 +163,6 @@ def main():
             time.sleep(WAIT_ON_ERROR)
             if mode == 'once':
                 break
-
 
 if __name__ == "__main__":
     main()
