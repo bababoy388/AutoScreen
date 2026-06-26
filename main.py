@@ -2,6 +2,7 @@ import configparser
 import time
 import threading
 import asyncio
+import logging
 from datetime import datetime, timedelta
 from collections import defaultdict
 from core.parser import Parser
@@ -10,42 +11,34 @@ from core.telegram_sender import TelegramSender
 from core.tools import log_error
 from core.bot_polling import dp, bot
 
-# ------------------------------------------------------------
-# Функция для запуска поллинга в отдельном потоке
-# ------------------------------------------------------------
-def run_aiogram_polling():
-    asyncio.run(dp.start_polling(bot))
+# Включаем логирование для отладки
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # ------------------------------------------------------------
-# Основной цикл
+# Рабочий цикл (сбор данных и отправка) — будет в фоновом потоке
 # ------------------------------------------------------------
-def main():
+def worker_loop():
     WAIT_ON_ERROR = 60
-
-    # Запускаем aiogram в фоновом потоке (daemon=True – завершится вместе с основным)
-    polling_thread = threading.Thread(target=run_aiogram_polling, daemon=True)
-    polling_thread.start()
-    print("✅ Aiogram поллинг запущен в фоновом потоке")
-
     while True:
         try:
             iteration_start = time.monotonic()
 
-            # --- 1. Перечитываем конфиг (чтобы видеть изменения от команд) ---
+            # --- 1. Перечитываем конфиг ---
             config = configparser.ConfigParser(interpolation=None)
             config.read('config.ini', encoding='utf-8')
 
-            # --- 2. Инициализация отправителя (токен/прокси из конфига) ---
+            # --- 2. Инициализация отправителя ---
             token = config.get('Telegram', 'token')
             chat_id = config.get('Telegram', 'chat_id')
             proxy_raw = config.get('Telegram', 'proxy', fallback=None)
             proxy = proxy_raw.strip() if proxy_raw else None
             sender = TelegramSender(token, chat_id, proxy)
 
-            # --- 3. Режим работы ---
+            # --- 3. Режим ---
             mode = config.get('Schedule', 'mode', fallback='once')
 
-            # --- 4. Группировка секций (как у вас было) ---
+            # --- 4. Группировка секций ---
             groups = defaultdict(list)
             for section in config.sections():
                 if section.startswith('Plot_'):
@@ -76,8 +69,8 @@ def main():
                     else:
                         log_error(f"Секция {first_plot} не найдена для сабплота {section}")
 
-            # --- 5. Обработка каждой группы (загрузка данных и построение графиков) ---
-            plotter = PlotConfig('config.ini')  # создаём заново с актуальным конфигом
+            # --- 5. Обработка групп ---
+            plotter = PlotConfig('config.ini')
             for key, sections in groups.items():
                 mill_uuid, info_host, info_port, download_host, download_port, from_min, to_min = key
 
@@ -104,7 +97,6 @@ def main():
                         sender.send_message(msg_text)
                         continue
 
-                    # Обрабатываем все секции этой группы
                     for section in sections:
                         if section.startswith('Plot_'):
                             if config.getboolean(section, 'upload', fallback=True):
@@ -129,7 +121,7 @@ def main():
                 except Exception as e:
                     log_error(f"Ошибка при обработке группы {key}: {e}")
 
-            # --- 6. Управление расписанием (с учётом изменённых параметров) ---
+            # --- 6. Ожидание по расписанию ---
             mode = config.get('Schedule', 'mode', fallback='once')
             if mode == 'once':
                 break
@@ -153,13 +145,29 @@ def main():
             time.sleep(wait_seconds)
 
         except KeyboardInterrupt:
-            print("\nРабота остановлена пользователем.")
             break
         except Exception as e:
-            log_error(f"Критическая ошибка в основном цикле: {e}")
+            log_error(f"Критическая ошибка в рабочем цикле: {e}")
             time.sleep(WAIT_ON_ERROR)
             if mode == 'once':
                 break
+
+# ------------------------------------------------------------
+# Главная функция — запускаем рабочий цикл в потоке, поллинг в главном
+# ------------------------------------------------------------
+def main():
+    # Запускаем рабочий цикл в фоновом потоке (daemon=True, чтобы завершался с main)
+    worker_thread = threading.Thread(target=worker_loop, daemon=True)
+    worker_thread.start()
+    print("✅ Рабочий цикл запущен в фоновом потоке")
+
+    # Запускаем поллинг в главном потоке
+    try:
+        asyncio.run(dp.start_polling(bot, handle_signals=False))
+    except KeyboardInterrupt:
+        print("\nОстановка бота...")
+    except Exception as e:
+        logger.error(f"Ошибка в поллинге: {e}", exc_info=True)
 
 if __name__ == "__main__":
     main()
