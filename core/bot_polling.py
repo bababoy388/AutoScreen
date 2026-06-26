@@ -107,7 +107,7 @@ async def cmd_get_graph(message: types.Message):
     # Здесь позже будет генерация графика за последние n минут
     await message.reply(f"⏳ Генерация графика за последние {n} минут... (пока не реализовано)")
 
-# ========== Обработчик любого текста (эхо, опционально) ==========
-@dp.message(F.text)
-async def echo(message: types.Message):
-    await message.answer(f"Ты написал: {message.text}")
+@dp.message()
+async def debug_all_messages(message: types.Message):
+    print(f"[DEBUG] Сообщение получено: '{message.text}' от {message.from_user.id} в чате {message.chat.id}")
+    await message.reply("Я получил ваше сообщение!")

@@ -4,13 +4,10 @@ import threading
 import asyncio
 from datetime import datetime, timedelta
 from collections import defaultdict
-
 from core.parser import Parser
 from core.builder_graph import PlotConfig
 from core.telegram_sender import TelegramSender
 from core.tools import log_error
-
-# Импортируем объекты aiogram из вашего bot_polling.py
 from core.bot_polling import dp, bot
 
 # ------------------------------------------------------------
