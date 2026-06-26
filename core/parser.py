@@ -21,6 +21,16 @@ class Parser:
         return (self.from_local.strftime('%Y-%m-%d %H:%M'),
                 self.to_local.strftime('%Y-%m-%d %H:%M'))
 
+    def set_custom_time_range(self, from_dt: datetime, to_dt: datetime):
+        def fmt(dt):
+            dt_utc = dt.astimezone(timezone.utc)
+            return dt_utc.strftime('%Y-%m-%dT%H:%M:%S.') + f"{dt_utc.microsecond // 1000:03d}Z"
+
+        self.from_time = fmt(from_dt)
+        self.to_time = fmt(to_dt)
+        self.from_local = from_dt
+        self.to_local = to_dt
+
     @staticmethod
     def _compute_time_range(from_minutes, to_minutes):
         local_now = datetime.now().astimezone()
