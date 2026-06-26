@@ -113,7 +113,22 @@ async def cmd_get_graph(message: types.Message):
     # Здесь позже будет генерация графика за последние n минут
     await message.reply(f"⏳ Генерация графика за последние {n} минут... (пока не реализовано)")
 
-@dp.message()
-async def debug_all_messages(message: types.Message):
-    print(f"[DEBUG] Сообщение получено: '{message.text}' от {message.from_user.id} в чате {message.chat.id}")
-    await message.reply("Я получил ваше сообщение!")
+# ========== Команда /mode ==========
+@dp.message(Command("mode"))
+async def cmd_mode(message: types.Message):
+    parts = message.text.split(maxsplit=1)
+    if len(parts) < 2:
+        await message.reply("❌ Укажите режим: daily или interval, например: /mode daily")
+        return
+    mode_str = parts[1].strip().lower()
+    if mode_str not in ('daily', 'interval'):
+        await message.reply("❌ Неверный режим. Используйте 'daily' или 'interval'")
+        return
+
+    config = read_config()
+    if 'Schedule' not in config:
+        config['Schedule'] = {}
+    config['Schedule']['mode'] = mode_str
+    save_config(config)
+
+    await message.reply(f"✅ Режим работы обновлён на '{mode_str}'")
