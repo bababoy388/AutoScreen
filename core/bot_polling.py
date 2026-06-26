@@ -4,20 +4,18 @@ import logging
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
 from aiogram.client.session.aiohttp import AiohttpSession
-from aiohttp import ClientTimeout
 
-# Настройка логирования aiogram
+# Включаем логирование, чтобы видеть, что происходит
 logging.basicConfig(level=logging.INFO)
 
 config = configparser.ConfigParser()
 config.read('config.ini', encoding='utf-8')
 TOKEN = config.get('Telegram', 'token')
 
-# Явно создаём сессию с таймаутом (даже без прокси)
-timeout = ClientTimeout(total=30)
-session = AiohttpSession(timeout=timeout)
-
+# Создаём сессию без дополнительных параметров (всё стандартное)
+session = AiohttpSession()
 bot = Bot(token=TOKEN, session=session)
+
 dp = Dispatcher()
 
 # ========== Вспомогательная функция для работы с конфигом ==========
