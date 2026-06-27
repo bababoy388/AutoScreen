@@ -312,14 +312,14 @@ async def cmd_get_graph(message: types.Message):
                         saved_path = plotter.build_for_section(section, df)
                         if saved_path:
                             photo = FSInputFile(saved_path)
-                            caption = f"{section}\n{time_range_str}"
+                            caption = f"{time_range_str}"
                             await message.answer_photo(photo, caption=caption)
                             sent_count += 1
                 elif section.startswith('Subplot_'):
                     saved_path = plotter.build_subplot(section, df)
                     if saved_path:
                         photo = FSInputFile(saved_path)
-                        caption = f"{section}\n{time_range_str}"
+                        caption = f"{time_range_str}"
                         await message.answer_photo(photo, caption=caption)
                         sent_count += 1
         except Exception as e:
