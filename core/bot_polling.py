@@ -2,22 +2,15 @@ import configparser
 from datetime import datetime, timedelta, timezone
 import re
 from collections import defaultdict
-import logging
-
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
 from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.types import FSInputFile
-
 from core.parser import Parser
 from core.builder_graph import PlotConfig
 from core.tools import log_error
 
-# Настройка логирования
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
 
-# ========== Чтение конфига ==========
 config = configparser.ConfigParser()
 config.read('config.ini', encoding='utf-8')
 TOKEN = config.get('Telegram', 'token')
@@ -25,36 +18,55 @@ PROXY = config.get('Telegram', 'proxy', fallback=None)
 if PROXY == '':
     PROXY = None
 
-# ========== Создаём сессию с прокси (если нужен) ==========
 session = AiohttpSession(proxy=PROXY) if PROXY else AiohttpSession()
-
-# ========== Создаём объекты бота и диспетчера ==========
 bot = Bot(token=TOKEN, session=session)
 dp = Dispatcher()
 
-# ========== Вспомогательные функции для работы с конфигом ==========
 CONFIG_PATH = 'config.ini'
+
 
 def read_config():
     config = configparser.ConfigParser(interpolation=None)
     config.read(CONFIG_PATH, encoding='utf-8')
     return config
 
+
 def save_config(config):
     with open(CONFIG_PATH, 'w', encoding='utf-8') as f:
         config.write(f)
 
+
+def is_user_allowed(user_id: int) -> bool:
+    config = read_config()
+    ids_str = config.get('AllowedUsers', 'user_ids', fallback='')
+    if not ids_str.strip():
+        return False
+    allowed_ids = [int(x.strip()) for x in ids_str.split(',') if x.strip().isdigit()]
+    return user_id in allowed_ids
+
+
 # ========== Команда /start ==========
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message):
-    await message.answer(
-        "🤖 Привет! Я бот для мониторинга мельниц.\n"
-        "Используй /help для списка команд."
-    )
+    user_id = message.from_user.id
+    if is_user_allowed(user_id):
+        await message.answer(
+            "🤖 Привет! Я бот для мониторинга мельниц.\n"
+            "Используй /help для списка команд."
+        )
+    else:
+        await message.answer(
+            f"👋 Привет!\n\n"
+            f"Ваш ID: `{user_id}`\n\n"
+            f"Для использования бота необходимо, чтобы администратор добавил ваш ID в список разрешённых пользователей.\n"
+            f"Отправьте этот ID администратору для добавления.",
+            parse_mode="Markdown"
+        )
 
-# ========== Команда /help ==========
 @dp.message(Command("help"))
 async def cmd_help(message: types.Message):
+    if not is_user_allowed(message.from_user.id):
+        return
     text = (
         "📋 Доступные команды:\n"
         "/start - приветствие\n"
@@ -64,18 +76,18 @@ async def cmd_help(message: types.Message):
         "/daily HH:MM - установить время для ежедневного запуска\n"
         "/interval_m N - установить интервал в минутах\n"
         "/get_graph N [дата] - получить график за N минут до указанной даты (или сейчас)\n"
+        "/add_user ID - добавить нового пользователя в список разрешённых\n"
         "Пример: /get_graph 720\n"
         "Или: /get_graph 720 2026.06.24-14:00"
     )
     await message.answer(text)
 
-# ========== Команда /info ==========
+
 @dp.message(Command("info"))
 async def cmd_info(message: types.Message):
-    config = read_config()
-    if 'Schedule' not in config:
-        await message.answer("Секция [Schedule] отсутствует в конфиге.")
+    if not is_user_allowed(message.from_user.id):
         return
+    config = read_config()
     schedule = config['Schedule']
     mode = schedule.get('mode', 'не указан')
     time_val = schedule.get('time', 'не указано')
@@ -88,9 +100,12 @@ async def cmd_info(message: types.Message):
     )
     await message.answer(text)
 
+
 # ========== Команда /mode ==========
 @dp.message(Command("mode"))
 async def cmd_mode(message: types.Message):
+    if not is_user_allowed(message.from_user.id):
+        return
     parts = message.text.split(maxsplit=1)
     if len(parts) < 2:
         await message.reply("❌ Укажите режим: daily, interval или once, например: /mode interval")
@@ -100,15 +115,14 @@ async def cmd_mode(message: types.Message):
         await message.reply("❌ Доступные режимы: once, daily, interval")
         return
     config = read_config()
-    if 'Schedule' not in config:
-        config['Schedule'] = {}
     config['Schedule']['mode'] = mode
     save_config(config)
     await message.reply(f"✅ Режим изменён на {mode}")
 
-# ========== Команда /daily ==========
 @dp.message(Command("daily"))
 async def cmd_daily(message: types.Message):
+    if not is_user_allowed(message.from_user.id):
+        return
     parts = message.text.split(maxsplit=1)
     if len(parts) < 2:
         await message.reply("❌ Укажите время в формате HH:MM, например: /daily 12:30")
@@ -121,16 +135,17 @@ async def cmd_daily(message: types.Message):
         return
 
     config = read_config()
-    if 'Schedule' not in config:
-        config['Schedule'] = {}
     config['Schedule']['time'] = time_str
     save_config(config)
 
     await message.reply(f"✅ Время ежедневного запуска обновлено на {time_str}")
 
+
 # ========== Команда /interval_m ==========
 @dp.message(Command("interval_m"))
 async def cmd_interval_m(message: types.Message):
+    if not is_user_allowed(message.from_user.id):
+        return
     parts = message.text.split(maxsplit=1)
     if len(parts) < 2:
         await message.reply("❌ Укажите количество минут, например: /interval_m 120")
@@ -145,20 +160,42 @@ async def cmd_interval_m(message: types.Message):
         return
 
     config = read_config()
-    if 'Schedule' not in config:
-        config['Schedule'] = {}
     config['Schedule']['interval_minutes'] = str(minutes)
     save_config(config)
 
     await message.reply(f"✅ Интервал обновлён на {minutes} минут")
 
-# ========== Команда /get_graph ==========
+
+# ========== Команда /add_user ==========
+@dp.message(Command("add_user"))
+async def cmd_add_user(message: types.Message):
+    if not is_user_allowed(message.from_user.id):
+        return
+    parts = message.text.split(maxsplit=1)
+    if len(parts) < 2:
+        await message.reply("❌ Укажите ID пользователя, например: /add_user 123456789")
+        return
+    user_id_str = parts[1].strip()
+    if not user_id_str.isdigit():
+        await message.reply("❌ ID должен быть числом.")
+        return
+    new_user_id = int(user_id_str)
+    config = read_config()
+    ids_str = config.get('AllowedUsers', 'user_ids', fallback='')
+    allowed_ids = []
+    if ids_str.strip():
+        allowed_ids = [int(x.strip()) for x in ids_str.split(',') if x.strip().isdigit()]
+
+    if new_user_id in allowed_ids:
+        await message.reply(f"⚠️ Пользователь с ID {new_user_id} уже есть в списке.")
+        return
+
+    allowed_ids.append(new_user_id)
+    config['AllowedUsers']['user_ids'] = ', '.join(map(str, allowed_ids))
+    save_config(config)
+    await message.reply(f"✅ Пользователь с ID {new_user_id} добавлен в список разрешённых.")
+
 def parse_graph_args(text: str):
-    """
-    Парсит текст команды /get_graph.
-    Возвращает (minutes, right_dt) или (None, None) при ошибке.
-    """
-    # Убираем упоминание бота, если есть
     clean = re.sub(r'^/get_graph(@\w+)?', '', text).strip()
     parts = clean.split(maxsplit=1)
     if not parts:
@@ -173,17 +210,18 @@ def parse_graph_args(text: str):
     right_dt = None
     if len(parts) > 1:
         date_str = parts[1].strip()
-        # Пробуем парсить формат ГГГГ.ММ.ДД-ЧЧ:ММ
         try:
             right_dt = datetime.strptime(date_str, '%Y.%m.%d-%H:%M')
         except ValueError:
             return None, None
-        # Делаем timezone-aware (локальное время)
         right_dt = right_dt.astimezone()
     return minutes, right_dt
 
+
 @dp.message(F.text.regexp(r'^/get_graph(@\w+)?( .+)?$'))
 async def cmd_get_graph(message: types.Message):
+    if not is_user_allowed(message.from_user.id):
+        return
     minutes, right_dt = parse_graph_args(message.text)
     if minutes is None:
         await message.reply(
@@ -193,7 +231,6 @@ async def cmd_get_graph(message: types.Message):
         )
         return
 
-    # Определяем правую границу интервала
     if right_dt is None:
         right_dt = datetime.now().astimezone()
     else:
@@ -205,9 +242,7 @@ async def cmd_get_graph(message: types.Message):
     time_range_str = f"{from_dt.strftime('%Y-%m-%d %H:%M')} – {right_dt.strftime('%Y-%m-%d %H:%M')}"
     await message.reply(f"⏳ Строю графики за период: {time_range_str}")
 
-    # Читаем конфиг
     config = read_config()
-    # Группируем секции (аналогично main.py)
     groups = defaultdict(list)
     for section in config.sections():
         if section.startswith('Plot_'):
@@ -247,7 +282,6 @@ async def cmd_get_graph(message: types.Message):
     for key, sections in groups.items():
         mill_uuid, info_host, info_port, download_host, download_port, _, _ = key
         try:
-            # Создаём парсер с параметрами из конфига (временные границы переопределим)
             parser = Parser(
                 mill_uuid=mill_uuid,
                 from_minutes=0,
@@ -257,10 +291,11 @@ async def cmd_get_graph(message: types.Message):
                 host_download=download_host,
                 port_download=download_port
             )
-            # Устанавливаем кастомные временные границы напрямую
+
             def fmt(dt):
                 dt_utc = dt.astimezone(timezone.utc)
                 return dt_utc.strftime('%Y-%m-%dT%H:%M:%S.') + f"{dt_utc.microsecond // 1000:03d}Z"
+
             parser.from_time = fmt(from_dt)
             parser.to_time = fmt(right_dt)
             parser.from_local = from_dt
@@ -290,13 +325,3 @@ async def cmd_get_graph(message: types.Message):
         except Exception as e:
             log_error(f"Ошибка при обработке группы {key}: {e}")
             await message.reply(f"❌ Ошибка при загрузке данных для {mill_uuid}: {e}")
-
-    if sent_count == 0:
-        await message.reply("❌ Не удалось построить ни одного графика.")
-    else:
-        await message.reply(f"✅ Отправлено {sent_count} графиков.")
-
-# ========== Обработчик не-команд ==========
-@dp.message(F.text & ~F.text.startswith('/'))
-async def echo(message: types.Message):
-    await message.reply("Я понимаю только команды. Используйте /help для списка.")

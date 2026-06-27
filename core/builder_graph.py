@@ -10,9 +10,6 @@ class PlotConfig:
         self.config.read(config_path, encoding='utf-8')
         self.output_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'graphs')
 
-    # ------------------------------------------------------------
-    # Публичный метод для обычного графика (одна секция)
-    # ------------------------------------------------------------
     def build_for_section(self, section, df):
         try:
             if not self.config.has_section(section):
@@ -49,14 +46,7 @@ class PlotConfig:
             if plt.get_fignums():
                 plt.close('all')
 
-    # ------------------------------------------------------------
-    # Публичный метод для сабплота
-    # ------------------------------------------------------------
     def build_subplot(self, subplot_section, df):
-        """
-        Строит сабплот из нескольких секций Plot_*, объединённых на одном изображении.
-        Возвращает путь к сохранённому файлу или None.
-        """
         try:
             if not self.config.has_section(subplot_section):
                 log_error(f"Секция '{subplot_section}' отсутствует")
@@ -125,18 +115,7 @@ class PlotConfig:
             if plt.get_fignums():
                 plt.close('all')
 
-    # ------------------------------------------------------------
-    # Внутренние методы для построения осей
-    # ------------------------------------------------------------
     def _create_axes_for_section(self, section, df, external_ax=None, return_fig=False):
-        """
-        Универсальный построитель осей.
-        Если external_ax задан – рисуем на нём (и создаём twinx при необходимости).
-        Если external_ax=None – создаём собственную фигуру.
-        Возвращает:
-          - при return_fig=True: (fig, None) если успешно, иначе (None, None)
-          - иначе: True/False
-        """
         # Определяем тип осей
         left_str = self.config.get(section, 'left_columns', fallback=None)
         right1_str = self.config.get(section, 'right1_columns', fallback=None)
@@ -154,7 +133,6 @@ class PlotConfig:
             return self._build_single_axis(section, df, external_ax, return_fig)
 
     def _build_single_axis(self, section, df, external_ax, return_fig):
-        """Обычный график с одной осью Y."""
         cols_str = self.config.get(section, 'columns')
         columns = [c.strip() for c in cols_str.split(',')]
         missing = [c for c in columns if c not in df.columns]
@@ -191,7 +169,6 @@ class PlotConfig:
 
     def _build_multi_axes(self, section, df, left_str, right1_str, right2_str,
                           external_ax, return_fig):
-        """График с двумя или тремя осями Y."""
         left_cols = [c.strip() for c in left_str.split(',')]
         right1_cols = [c.strip() for c in right1_str.split(',')] if right1_str else []
         right2_cols = [c.strip() for c in right2_str.split(',')] if right2_str else []
