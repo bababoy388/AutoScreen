@@ -38,13 +38,35 @@ def worker_loop():
             if mode == 'once':
                 pass
             elif mode == 'daily':
-                target_time = datetime.strptime(time_str, '%H:%M').time()
-                now = datetime.now().astimezone()
-                target_dt = now.replace(hour=target_time.hour, minute=target_time.minute,
-                                        second=0, microsecond=0)
-                if target_dt <= now:
-                    target_dt += timedelta(days=1)
-                wait_seconds = (target_dt - datetime.now().astimezone()).total_seconds()
+                time_str = config.get('Schedule', 'time', fallback='')
+                if not time_str.strip():
+                    print("⚠️ Режим daily, но время не указано. Жду 1 час...")
+                    wait_seconds = 3600
+                else:
+                    # Парсим список времен
+                    times = [t.strip() for t in time_str.split(',') if t.strip()]
+                    valid_times = []
+                    now = datetime.now().astimezone()
+                    for t in times:
+                        try:
+                            time_obj = datetime.strptime(t, '%H:%M').time()
+                            valid_times.append(time_obj)
+                        except ValueError:
+                            log_error(f"Неверный формат времени: {t}")
+                    if not valid_times:
+                        print("⚠️ Нет корректных времен. Жду 1 час...")
+                        wait_seconds = 3600
+                    else:
+                        # Находим ближайшее будущее время
+                        target_dts = []
+                        for t in valid_times:
+                            target = now.replace(hour=t.hour, minute=t.minute, second=0, microsecond=0)
+                            if target <= now:
+                                target += timedelta(days=1)
+                            target_dts.append(target)
+                        next_dt = min(target_dts)
+                        wait_seconds = (next_dt - now).total_seconds()
+                        print(f"⏳ Жду до {next_dt.strftime('%Y-%m-%d %H:%M')} (через {wait_seconds:.0f} сек)")
             elif mode == 'interval':
                 wait_seconds = interval_min * 60
             else:

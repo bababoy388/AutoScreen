@@ -73,7 +73,7 @@ async def cmd_help(message: types.Message):
         "/help - список команд\n"
         "/info - показать текущие настройки расписания\n"
         "/mode daily|interval|once - переключить режим работы\n"
-        "/daily HH:MM - установить время для ежедневного запуска\n"
+        "/daily HH:MM[, HH:MM, ...] - установить время(а) ежедневного запуска (через запятую)"
         "/interval_m N - установить интервал в минутах\n"
         "/change_graph <Subplot_секция> <параметр> <значение> - изменить параметр во всех графиках сабплота\n"
         "/add_user ID - добавить нового пользователя в список разрешённых\n"
@@ -203,20 +203,27 @@ async def cmd_daily(message: types.Message):
         return
     parts = message.text.split(maxsplit=1)
     if len(parts) < 2:
-        await message.reply("❌ Укажите время в формате HH:MM, например: /daily 12:30")
+        await message.reply("❌ Укажите время (или несколько через запятую) в формате HH:MM, например:\n/daily 9:00\n/daily 9:00, 10:00, 21:00")
         return
     time_str = parts[1].strip()
-    try:
-        datetime.strptime(time_str, "%H:%M")
-    except ValueError:
-        await message.reply("❌ Неверный формат времени. Используйте HH:MM (например, 14:30)")
+    # Проверяем каждое время
+    errors = []
+    for t in [x.strip() for x in time_str.split(',') if x.strip()]:
+        try:
+            datetime.strptime(t, "%H:%M")
+        except ValueError:
+            errors.append(t)
+    if errors:
+        await message.reply(f"❌ Неверный формат времени: {', '.join(errors)}. Используйте HH:MM")
         return
 
     config = read_config()
+    if 'Schedule' not in config:
+        config['Schedule'] = {}
     config['Schedule']['time'] = time_str
     save_config(config)
 
-    await message.reply(f"✅ Время ежедневного запуска обновлено на {time_str}")
+    await message.reply(f"✅ Время ежедневного запуска обновлено на: {time_str}")
 
 
 # ========== Команда /interval_m ==========
