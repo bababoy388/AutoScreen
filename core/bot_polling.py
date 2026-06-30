@@ -69,19 +69,97 @@ async def cmd_help(message: types.Message):
         return
     text = (
         "📋 Доступные команды:\n"
-        "/start - приветствие\n"
+        "/start - приветствие/получить свой id\n"
         "/help - список команд\n"
         "/info - показать текущие настройки расписания\n"
         "/mode daily|interval|once - переключить режим работы\n"
         "/daily HH:MM - установить время для ежедневного запуска\n"
         "/interval_m N - установить интервал в минутах\n"
-        "/get_graph N [дата] - получить график за N минут до указанной даты (или сейчас)\n"
+        "/change_graph <Subplot_секция> <параметр> <значение> - изменить параметр во всех графиках сабплота\n"
         "/add_user ID - добавить нового пользователя в список разрешённых\n"
+        "/list_subplots - показать все сабплоты\n"
+        "/get_graph N [дата] - получить график за N минут до указанной даты (или сейчас)\n"
         "Пример: /get_graph 720\n"
         "Или: /get_graph 720 2026.06.24-14:00"
     )
     await message.answer(text)
 
+@dp.message(Command("list_subplots"))
+async def cmd_list_subplots(message: types.Message):
+    if not is_user_allowed(message.from_user.id):
+        return
+    config = read_config()
+    subplots = []
+    for section in config.sections():
+        if section.startswith('Subplot_'):
+            msg = config.get(section, 'msg', fallback='')
+            subplots.append(f"{section} - {msg}")
+    if not subplots:
+        await message.reply("❌ Сабплоты не найдены.")
+        return
+    text = "📋 Список сабплотов:\n" + "\n".join(subplots)
+    await message.answer(text)
+
+# ========== Команда /change_graph ==========
+@dp.message(Command("change_graph"))
+async def cmd_change_graph(message: types.Message):
+    if not is_user_allowed(message.from_user.id):
+        return
+
+    parts = message.text.split(maxsplit=3)
+    if len(parts) < 4:
+        await message.reply(
+            "❌ Используйте: /change_graph <Subplot_секция> <параметр> <новое_значение>\n"
+            "Пример: /change_graph Subplot_1 from_minutes -200\n"
+            "Доступные параметры: from_minutes, to_minutes, info_host, info_port, download_host, download_port, columns, title, ylabel, kind, figsize, grid, colors, left_columns, left_ylabel, right1_columns, right1_ylabel, right2_columns, right2_ylabel"
+        )
+        return
+
+    subplot_section = parts[1].strip()
+    param = parts[2].strip()
+    new_value = parts[3].strip()
+
+    config = read_config()
+
+    # Проверяем, что сабплот существует
+    if not config.has_section(subplot_section) or not subplot_section.startswith('Subplot_'):
+        await message.reply(f"❌ Секция {subplot_section} не найдена или не является сабплотом.")
+        return
+
+    # Получаем список секций Plot_ из сабплота
+    sections_str = config.get(subplot_section, 'sections')
+    plot_sections = [s.strip() for s in sections_str.split(',')]
+
+    # Проверяем, что все эти секции существуют
+    missing = [s for s in plot_sections if not config.has_section(s)]
+    if missing:
+        await message.reply(f"❌ Следующие секции не найдены: {', '.join(missing)}")
+        return
+
+    # Проверяем, есть ли такой параметр хотя бы в одной секции
+    # (если нет ни в одной, то сообщим об ошибке)
+    found = False
+    for sec in plot_sections:
+        if config.has_option(sec, param):
+            found = True
+            break
+    if not found:
+        await message.reply(f"❌ Параметр '{param}' не найден ни в одной из секций сабплота.")
+        return
+
+    # Меняем параметр во всех секциях
+    updated = 0
+    for sec in plot_sections:
+        if config.has_option(sec, param):
+            config.set(sec, param, new_value)
+            updated += 1
+        else:
+            pass
+
+    save_config(config)
+    await message.reply(
+        f"✅ Параметр '{param}' изменён на '{new_value}' в {updated} секциях сабплота {subplot_section}."
+    )
 
 @dp.message(Command("info"))
 async def cmd_info(message: types.Message):
