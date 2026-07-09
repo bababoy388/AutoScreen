@@ -61,10 +61,18 @@ class Parser:
             raise
 
     def _download_zip_bytes(self, file_name):
+        # Проверяем, что millUuid не пустой
+        if not self.mill_uuid:
+            raise ValueError("millUuid не может быть пустым для скачивания файла")
+
         encoded_name = requests.utils.quote(file_name, safe='')
-        url = f"http://{self.host}:{self.port}/api/RawData/download?fileName={encoded_name}"
+        url = f"http://{self.host}:{self.port}/api/RawData/download"
+        params = {
+            "fileName": encoded_name,
+            "millUuid": self.mill_uuid  
+        }
         try:
-            resp = retry_request(lambda: requests.get(url))
+            resp = retry_request(lambda: requests.get(url, params=params))
             resp.raise_for_status()
             return io.BytesIO(resp.content)
         except Exception as e:
