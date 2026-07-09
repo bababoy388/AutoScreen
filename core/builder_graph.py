@@ -22,12 +22,10 @@ class PlotConfig:
             upload = self.config.getboolean(section, 'upload', fallback=True)
             save = self.config.get(section, 'save')
 
-            # Получаем оси для секции
             fig, axes_tuple = self._create_axes_for_section(section, df, return_fig=True)
             if fig is None:
                 return None
 
-            # Сохраняем только если upload=True
             if upload:
                 os.makedirs(self.output_dir, exist_ok=True)
                 full_path = os.path.join(self.output_dir, save)
@@ -35,7 +33,6 @@ class PlotConfig:
                 plt.close(fig)
                 return full_path
             else:
-                # Не сохраняем, но фигуру нужно закрыть
                 plt.close(fig)
                 return None
 
@@ -55,8 +52,18 @@ class PlotConfig:
                 log_error(f"DataFrame пуст или None для '{subplot_section}'")
                 return None
 
-            sections_str = self.config.get(subplot_section, 'sections')
-            plot_sections = [s.strip() for s in sections_str.split(',')]
+            plots_str = self.config.get(subplot_section, 'plots', fallback=None)
+            if plots_str is None:
+                plots_str = self.config.get(subplot_section, 'sections', fallback=None)
+            if plots_str is None:
+                log_error(f"В секции '{subplot_section}' не указаны plots или sections")
+                return None
+
+            plot_sections = [s.strip() for s in plots_str.split(',') if s.strip()]
+            if not plot_sections:
+                log_error(f"В секции '{subplot_section}' нет графиков")
+                return None
+
             rows = self.config.getint(subplot_section, 'rows', fallback=1)
             cols = self.config.getint(subplot_section, 'cols', fallback=1)
             total_cells = rows * cols
@@ -73,12 +80,12 @@ class PlotConfig:
             grid = self.config.getboolean(subplot_section, 'grid', fallback=True)
             save = self.config.get(subplot_section, 'save')
 
-            # Создаём общий figure
             fig, axes = plt.subplots(rows, cols, figsize=figsize, squeeze=False)
             axes_flat = axes.flatten()
 
-            # Для каждой секции строим её содержимое в своей ячейке
             for idx, section in enumerate(plot_sections):
+                if idx >= total_cells:
+                    break
                 if not self.config.has_section(section):
                     log_error(f"Секция '{section}' не найдена, пропуск в сабплоте")
                     continue
@@ -91,16 +98,14 @@ class PlotConfig:
                 ax_main.set_title(self.config.get(section, 'title', fallback=''))
                 ax_main.grid(grid)
 
-            # Общий заголовок
             suptitle = self.config.get(subplot_section, 'title', fallback='')
             if suptitle:
                 fig.suptitle(suptitle, fontsize=14)
 
-            # Убираем пустые ячейки, если их больше чем секций
             for j in range(len(plot_sections), total_cells):
                 axes_flat[j].set_visible(False)
 
-            fig.tight_layout(rect=[0, 0, 1, 0.95])  # rect для общего заголовка
+            fig.tight_layout(rect=[0, 0, 1, 0.95])
 
             os.makedirs(self.output_dir, exist_ok=True)
             full_path = os.path.join(self.output_dir, save)
@@ -173,7 +178,6 @@ class PlotConfig:
         right1_cols = [c.strip() for c in right1_str.split(',')] if right1_str else []
         right2_cols = [c.strip() for c in right2_str.split(',')] if right2_str else []
 
-        # Проверка колонок
         all_cols = left_cols + right1_cols + right2_cols
         missing = [c for c in all_cols if c not in df.columns]
         if missing:
@@ -183,7 +187,6 @@ class PlotConfig:
         kind = self.config.get(section, 'kind')
         colors = self._get_colors_for_section(section)
 
-        # Создаём оси
         if external_ax is None:
             figsize_str = self.config.get(section, 'figsize')
             figsize = tuple(map(int, figsize_str.split(',')))
@@ -192,21 +195,17 @@ class PlotConfig:
             fig = external_ax.figure
             ax_left = external_ax
 
-        # Создаём правые оси
         ax_right1 = ax_left.twinx() if right1_cols else None
         ax_right2 = None
         if right2_cols:
             ax_right2 = ax_left.twinx()
-            # Сдвигаем вторую правую ось дальше вправо
+
             ax_right2.spines['right'].set_position(('axes', 1 + 0.08))
-            # Устанавливаем цвет подписи и меток, чтобы отличать
-            # (опционально, можно задать цвет из цветов)
             if colors and len(colors) > len(left_cols) + len(right1_cols):
                 color2 = colors[len(left_cols) + len(right1_cols)]
                 ax_right2.tick_params(axis='y', labelcolor=color2)
                 ax_right2.yaxis.label.set_color(color2)
 
-        # Рисуем левую ось
         color_idx = 0
         if left_cols:
             c = colors[color_idx:color_idx + len(left_cols)] if colors else None
@@ -216,7 +215,6 @@ class PlotConfig:
         if left_ylabel:
             ax_left.set_ylabel(left_ylabel)
 
-        # Рисуем первую правую ось
         if right1_cols and ax_right1:
             c = colors[color_idx:color_idx + len(right1_cols)] if colors else None
             df[right1_cols].plot(kind=kind, ax=ax_right1, legend=False, color=c)
@@ -227,18 +225,16 @@ class PlotConfig:
             if right1_ylabel:
                 ax_right1.set_ylabel(right1_ylabel)
 
-        # Рисуем вторую правую ось
         if right2_cols and ax_right2:
             c = colors[color_idx:color_idx + len(right2_cols)] if colors else None
             df[right2_cols].plot(kind=kind, ax=ax_right2, legend=False, color=c)
             right2_ylabel = self.config.get(section, 'right2_ylabel', fallback='')
             if right2_ylabel:
                 ax_right2.set_ylabel(right2_ylabel)
-                # Принудительно делаем подпись и метки третьей оси чёрными
+
                 ax_right2.yaxis.label.set_color('black')
                 ax_right2.tick_params(axis='y', labelcolor='black')
 
-        # Сборка легенды
         lines, labels = [], []
         for ax in [ax_left, ax_right1, ax_right2]:
             if ax:
@@ -248,7 +244,6 @@ class PlotConfig:
         if lines:
             ax_left.legend(lines, labels, loc='best')
 
-        # Настройка отступов, чтобы подписи не обрезались
         fig.tight_layout()
 
         if return_fig:

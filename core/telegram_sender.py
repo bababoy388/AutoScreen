@@ -7,19 +7,12 @@ class TelegramSender:
         self.token = token
         self.chat_id = chat_id
         self.base_url = f"https://api.telegram.org/bot{token}"
-        self.proxy = proxy if proxy else None
-
-    def _get_proxies(self):
-        if self.proxy:
-            return {'http': self.proxy, 'https': self.proxy}
-        return None
 
     def send_message(self, text):
         url = f"{self.base_url}/sendMessage"
         data = {'chat_id': self.chat_id, 'text': text}
         try:
-            resp = retry_request(lambda: requests.post(url, data=data,
-                                 proxies=self._get_proxies(), timeout=15))
+            resp = retry_request(lambda: requests.post(url, data=data, timeout=15))
             resp.raise_for_status()
         except Exception as e:
             log_error(f"Ошибка отправки сообщения: {e}")
@@ -30,8 +23,7 @@ class TelegramSender:
             data = {'chat_id': self.chat_id, 'caption': caption}
             files = {'photo': photo_file}
             try:
-                resp = retry_request(lambda: requests.post(url, data=data, files=files,
-                                     proxies=self._get_proxies(), timeout=15))
+                resp = retry_request(lambda: requests.post(url, data=data, files=files, timeout=15))
                 resp.raise_for_status()
             except Exception as e:
                 log_error(f"Ошибка отправки фото: {e}")

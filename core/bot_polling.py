@@ -1,7 +1,6 @@
 import configparser
 from datetime import datetime, timedelta, timezone
 import re
-from collections import defaultdict
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
 from aiogram.client.session.aiohttp import AiohttpSession
@@ -14,15 +13,10 @@ from core.tools import log_error
 config = configparser.ConfigParser()
 config.read('config.ini', encoding='utf-8')
 TOKEN = config.get('Telegram', 'token')
-PROXY = config.get('Telegram', 'proxy', fallback=None)
-if PROXY == '':
-    PROXY = None
-
-session = AiohttpSession(proxy=PROXY) if PROXY else AiohttpSession()
+CONFIG_PATH = 'config.ini'
+session = AiohttpSession()
 bot = Bot(token=TOKEN, session=session)
 dp = Dispatcher()
-
-CONFIG_PATH = 'config.ini'
 
 
 def read_config():
@@ -30,13 +24,11 @@ def read_config():
     config.read(CONFIG_PATH, encoding='utf-8')
     return config
 
-
 def save_config(config):
     with open(CONFIG_PATH, 'w', encoding='utf-8') as f:
         config.write(f)
 
-
-def is_user_allowed(user_id: int) -> bool:
+def is_user_allowed(user_id):
     config = read_config()
     ids_str = config.get('AllowedUsers', 'user_ids', fallback='')
     if not ids_str.strip():
@@ -44,19 +36,39 @@ def is_user_allowed(user_id: int) -> bool:
     allowed_ids = [int(x.strip()) for x in ids_str.split(',') if x.strip().isdigit()]
     return user_id in allowed_ids
 
+def parse_graph_args(text):
+    clean = re.sub(r'^/get_graph(@\w+)?', '', text).strip()
+    parts = clean.split(maxsplit=1)
+    if not parts:
+        return None, None
+    try:
+        minutes = int(parts[0])
+        if minutes <= 0:
+            return None, None
+    except ValueError:
+        return None, None
 
-# ========== Команда /start ==========
+    right_dt = None
+    if len(parts) > 1:
+        date_str = parts[1].strip()
+        try:
+            right_dt = datetime.strptime(date_str, '%Y.%m.%d-%H:%M')
+        except ValueError:
+            return None, None
+        right_dt = right_dt.astimezone()
+    return minutes, right_dt
+
+
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message):
     user_id = message.from_user.id
     if is_user_allowed(user_id):
         await message.answer(
-            "🤖 Привет! Я бот для мониторинга мельниц.\n"
-            "Используй /help для списка команд."
+            "Привет! Я бот для мониторинга мельниц.\n"
+            "Используй /help для списка команд.",
         )
     else:
         await message.answer(
-            f"👋 Привет!\n\n"
             f"Ваш ID: `{user_id}`\n\n"
             f"Для использования бота необходимо, чтобы администратор добавил ваш ID в список разрешённых пользователей.\n"
             f"Отправьте этот ID администратору для добавления.",
@@ -67,18 +79,22 @@ async def cmd_start(message: types.Message):
 async def cmd_help(message: types.Message):
     if not is_user_allowed(message.from_user.id):
         return
+
     text = (
         "📋 Доступные команды:\n"
-        "/start - приветствие/получить свой id\n"
+        "/start - приветствие / получить свой ID\n"
         "/help - список команд\n"
         "/info - показать текущие настройки расписания\n"
-        "/mode daily|interval|once - переключить режим работы\n"
-        "/daily HH:MM[, HH:MM, ...] - установить время(а) ежедневного запуска (через запятую)"
-        "/interval_m N - установить интервал в минутах\n"
-        "/change_graph <Subplot_секция> <параметр> <значение> - изменить параметр во всех графиках сабплота\n"
-        "/add_user ID - добавить нового пользователя в список разрешённых\n"
-        "/list_subplots - показать все сабплоты\n"
-        "/get_graph N [дата] - получить график за N минут до указанной даты (или сейчас)\n"
+        "/mode [режим] - установить глобальный режим (once/daily/interval)\n"
+        "/mode <Subplot> <режим> - установить режим для конкретного завода\n"
+        "/daily [время] - установить глобальное время (HH:MM или через запятую)\n"
+        "/daily <Subplot> <время> - установить время для конкретного завода\n"
+        "/interval_m [минуты] - установить глобальный интервал\n"
+        "/interval_m <Subplot> <минуты> - установить интервал для конкретного завода\n"
+        "/change_graph <Subplot> <параметр> <значение> - изменить параметр завода\n"
+        "/add_user ID - добавить нового пользователя\n"
+        "/list_subplots - показать все заводы (сабплоты)\n"
+        "/get_graph N [дата] - получить графики за N минут до указанной даты (или сейчас)\n"
         "Пример: /get_graph 720\n"
         "Или: /get_graph 720 2026.06.24-14:00"
     )
@@ -88,6 +104,7 @@ async def cmd_help(message: types.Message):
 async def cmd_list_subplots(message: types.Message):
     if not is_user_allowed(message.from_user.id):
         return
+
     config = read_config()
     subplots = []
     for section in config.sections():
@@ -97,161 +114,203 @@ async def cmd_list_subplots(message: types.Message):
     if not subplots:
         await message.reply("❌ Сабплоты не найдены.")
         return
-    text = "📋 Список сабплотов:\n" + "\n".join(subplots)
+    text = "📋 Список заводов:\n" + "\n".join(subplots)
     await message.answer(text)
-
-# ========== Команда /change_graph ==========
-@dp.message(Command("change_graph"))
-async def cmd_change_graph(message: types.Message):
-    if not is_user_allowed(message.from_user.id):
-        return
-
-    parts = message.text.split(maxsplit=3)
-    if len(parts) < 4:
-        await message.reply(
-            "❌ Используйте: /change_graph <Subplot_секция> <параметр> <новое_значение>\n"
-            "Пример: /change_graph Subplot_1 from_minutes -200\n"
-            "Доступные параметры: from_minutes, to_minutes, info_host, info_port, download_host, download_port, columns, title, ylabel, kind, figsize, grid, colors, left_columns, left_ylabel, right1_columns, right1_ylabel, right2_columns, right2_ylabel"
-        )
-        return
-
-    subplot_section = parts[1].strip()
-    param = parts[2].strip()
-    new_value = parts[3].strip()
-
-    config = read_config()
-
-    # Проверяем, что сабплот существует
-    if not config.has_section(subplot_section) or not subplot_section.startswith('Subplot_'):
-        await message.reply(f"❌ Секция {subplot_section} не найдена или не является сабплотом.")
-        return
-
-    # Получаем список секций Plot_ из сабплота
-    sections_str = config.get(subplot_section, 'sections')
-    plot_sections = [s.strip() for s in sections_str.split(',')]
-
-    # Проверяем, что все эти секции существуют
-    missing = [s for s in plot_sections if not config.has_section(s)]
-    if missing:
-        await message.reply(f"❌ Следующие секции не найдены: {', '.join(missing)}")
-        return
-
-    # Проверяем, есть ли такой параметр хотя бы в одной секции
-    # (если нет ни в одной, то сообщим об ошибке)
-    found = False
-    for sec in plot_sections:
-        if config.has_option(sec, param):
-            found = True
-            break
-    if not found:
-        await message.reply(f"❌ Параметр '{param}' не найден ни в одной из секций сабплота.")
-        return
-
-    # Меняем параметр во всех секциях
-    updated = 0
-    for sec in plot_sections:
-        if config.has_option(sec, param):
-            config.set(sec, param, new_value)
-            updated += 1
-        else:
-            pass
-
-    save_config(config)
-    await message.reply(
-        f"✅ Параметр '{param}' изменён на '{new_value}' в {updated} секциях сабплота {subplot_section}."
-    )
 
 @dp.message(Command("info"))
 async def cmd_info(message: types.Message):
     if not is_user_allowed(message.from_user.id):
         return
+
     config = read_config()
-    schedule = config['Schedule']
-    mode = schedule.get('mode', 'не указан')
-    time_val = schedule.get('time', 'не указано')
-    interval = schedule.get('interval_minutes', 'не указан')
-    text = (
-        f"📋 Текущие настройки расписания:\n"
-        f"Режим: {mode}\n"
-        f"Время: {time_val}\n"
-        f"Интервал (мин): {interval}"
-    )
+    # Глобальные настройки
+    global_mode = config.get('Schedule', 'mode', fallback='не указан')
+    global_time = config.get('Schedule', 'time', fallback='не указано')
+    global_interval = config.get('Schedule', 'interval_minutes', fallback='не указан')
+
+    text = "📋 Глобальные настройки расписания:\n"
+    text += f"  Режим: {global_mode}\n"
+    text += f"  Время: {global_time}\n"
+    text += f"  Интервал: {global_interval} мин\n\n"
+
+    subplots = [s for s in config.sections() if s.startswith('Subplot_')]
+    if subplots:
+        text += "📋 Настройки заводов:\n"
+        for sub in subplots:
+            params = dict(config.items(sub))
+            # Определяем, какие параметры переопределены локально
+            mode = params.get('mode')
+            time_val = params.get('time')
+            interval = params.get('interval_minutes')
+            # Если локально не задано, пишем "(глобально)"
+            mode_str = mode if mode else "(глобально)"
+            time_str = time_val if time_val else "(глобально)"
+            interval_str = interval if interval else "(глобально)"
+            text += f"{sub}:\n"
+            text += f"  Режим: {mode_str}\n"
+            if mode_str == 'daily':
+                text += f"  Время: {time_str}\n"
+            elif mode_str == 'interval':
+                text += f"  Интервал: {interval_str} мин\n"
+            elif mode_str == 'once':
+                text += "  (один раз)\n"
+            else:
+                text += f"  Время: {time_str} / Интервал: {interval_str} мин\n"
+    else:
+        text += "❌ Секции Subplot_ не найдены."
+
     await message.answer(text)
 
-
-# ========== Команда /mode ==========
 @dp.message(Command("mode"))
 async def cmd_mode(message: types.Message):
     if not is_user_allowed(message.from_user.id):
         return
-    parts = message.text.split(maxsplit=1)
-    if len(parts) < 2:
-        await message.reply("❌ Укажите режим: daily, interval или once, например: /mode interval")
+
+    parts = message.text.split(maxsplit=2)
+    if len(parts) == 1:
+        await message.reply("❌ Укажите режим: once, daily или interval")
         return
-    mode = parts[1].strip().lower()
-    if mode not in ('daily', 'interval', 'once'):
-        await message.reply("❌ Доступные режимы: once, daily, interval")
+    if len(parts) == 2:
+        mode = parts[1].strip().lower()
+        if mode not in ('daily', 'interval', 'once'):
+            await message.reply("❌ Доступные режимы: once, daily, interval")
+            return
+        config = read_config()
+        config['Schedule']['mode'] = mode
+        save_config(config)
+        await message.reply(f"✅ Глобальный режим изменён на {mode}")
         return
-    config = read_config()
-    config['Schedule']['mode'] = mode
-    save_config(config)
-    await message.reply(f"✅ Режим изменён на {mode}")
+
+    if len(parts) == 3:
+        subplot = parts[1].strip()
+        mode = parts[2].strip().lower()
+        if mode not in ('daily', 'interval', 'once'):
+            await message.reply("❌ Доступные режимы: once, daily, interval")
+            return
+        config = read_config()
+        if not config.has_section(subplot) or not subplot.startswith('Subplot_'):
+            await message.reply(f"❌ Секция {subplot} не найдена.")
+            return
+        config.set(subplot, 'mode', mode)
+        save_config(config)
+        await message.reply(f"✅ Режим для {subplot} изменён на {mode}")
+        return
 
 @dp.message(Command("daily"))
 async def cmd_daily(message: types.Message):
     if not is_user_allowed(message.from_user.id):
         return
-    parts = message.text.split(maxsplit=1)
-    if len(parts) < 2:
-        await message.reply("❌ Укажите время (или несколько через запятую) в формате HH:MM, например:\n/daily 9:00\n/daily 9:00, 10:00, 21:00")
+    parts = message.text.split(maxsplit=2)
+    if len(parts) == 2:
+        time_str = parts[1].strip()
+        errors = []
+        for t in [x.strip() for x in time_str.split(',') if x.strip()]:
+            try:
+                datetime.strptime(t, "%H:%M")
+            except ValueError:
+                errors.append(t)
+        if errors:
+            await message.reply(f"❌ Неверный формат времени: {', '.join(errors)}. Используйте HH:MM")
+            return
+        config = read_config()
+        config['Schedule']['time'] = time_str
+        save_config(config)
+        await message.reply(f"✅ Глобальное время обновлено: {time_str}")
         return
-    time_str = parts[1].strip()
-    # Проверяем каждое время
-    errors = []
-    for t in [x.strip() for x in time_str.split(',') if x.strip()]:
-        try:
-            datetime.strptime(t, "%H:%M")
-        except ValueError:
-            errors.append(t)
-    if errors:
-        await message.reply(f"❌ Неверный формат времени: {', '.join(errors)}. Используйте HH:MM")
+
+    if len(parts) == 3:
+        subplot = parts[1].strip()
+        time_str = parts[2].strip()
+        errors = []
+        for t in [x.strip() for x in time_str.split(',') if x.strip()]:
+            try:
+                datetime.strptime(t, "%H:%M")
+            except ValueError:
+                errors.append(t)
+        if errors:
+            await message.reply(f"❌ Неверный формат времени: {', '.join(errors)}. Используйте HH:MM")
+            return
+        config = read_config()
+        if not config.has_section(subplot) or not subplot.startswith('Subplot_'):
+            await message.reply(f"❌ Секция {subplot} не найдена.")
+            return
+        config.set(subplot, 'time', time_str)
+
+        if not config.has_option(subplot, 'mode'):
+            config.set(subplot, 'mode', 'daily')
+        save_config(config)
+        await message.reply(f"✅ Время для {subplot} обновлено: {time_str}")
         return
 
-    config = read_config()
-    if 'Schedule' not in config:
-        config['Schedule'] = {}
-    config['Schedule']['time'] = time_str
-    save_config(config)
+    await message.reply("❌ Укажите время (или сабплот и время).")
 
-    await message.reply(f"✅ Время ежедневного запуска обновлено на: {time_str}")
-
-
-# ========== Команда /interval_m ==========
 @dp.message(Command("interval_m"))
 async def cmd_interval_m(message: types.Message):
     if not is_user_allowed(message.from_user.id):
         return
+    parts = message.text.split(maxsplit=2)
+    if len(parts) == 2:
+        minutes_str = parts[1].strip()
+        try:
+            minutes = int(minutes_str)
+            if minutes <= 0:
+                raise ValueError
+        except ValueError:
+            await message.reply("❌ Введите положительное целое число минут.")
+            return
+        config = read_config()
+        config['Schedule']['interval_minutes'] = str(minutes)
+        save_config(config)
+        await message.reply(f"✅ Глобальный интервал обновлён на {minutes} минут")
+        return
+
+    if len(parts) == 3:
+        subplot = parts[1].strip()
+        minutes_str = parts[2].strip()
+        try:
+            minutes = int(minutes_str)
+            if minutes <= 0:
+                raise ValueError
+        except ValueError:
+            await message.reply("❌ Введите положительное целое число минут.")
+            return
+        config = read_config()
+        if not config.has_section(subplot) or not subplot.startswith('Subplot_'):
+            await message.reply(f"❌ Секция {subplot} не найдена.")
+            return
+        config.set(subplot, 'interval_minutes', str(minutes))
+        if not config.has_option(subplot, 'mode'):
+            config.set(subplot, 'mode', 'interval')
+        save_config(config)
+        await message.reply(f"✅ Интервал для {subplot} обновлён на {minutes} минут")
+        return
+    await message.reply("❌ Укажите количество минут (или сабплот и минуты).")
+
+@dp.message(Command("reset_schedule"))
+async def cmd_reset_schedule(message: types.Message):
+    if not is_user_allowed(message.from_user.id):
+        return
     parts = message.text.split(maxsplit=1)
     if len(parts) < 2:
-        await message.reply("❌ Укажите количество минут, например: /interval_m 120")
+        await message.reply("❌ Укажите сабплот, например: /reset_schedule Subplot_1")
         return
-    minutes_str = parts[1].strip()
-    try:
-        minutes = int(minutes_str)
-        if minutes <= 0:
-            raise ValueError
-    except ValueError:
-        await message.reply("❌ Введите положительное целое число минут.")
-        return
-
+    subplot = parts[1].strip()
     config = read_config()
-    config['Schedule']['interval_minutes'] = str(minutes)
+    if not config.has_section(subplot) or not subplot.startswith('Subplot_'):
+        await message.reply(f"❌ Секция {subplot} не найдена.")
+        return
+
+    removed = []
+    for param in ('mode', 'time', 'interval_minutes'):
+        if config.has_option(subplot, param):
+            config.remove_option(subplot, param)
+            removed.append(param)
+    if not removed:
+        await message.reply(f"ℹ️ В {subplot} не было локальных настроек расписания.")
+        return
     save_config(config)
+    await message.reply(f"✅ В {subplot} удалены локальные параметры: {', '.join(removed)}. Теперь используются глобальные настройки.")
 
-    await message.reply(f"✅ Интервал обновлён на {minutes} минут")
-
-
-# ========== Команда /add_user ==========
 @dp.message(Command("add_user"))
 async def cmd_add_user(message: types.Message):
     if not is_user_allowed(message.from_user.id):
@@ -280,29 +339,6 @@ async def cmd_add_user(message: types.Message):
     save_config(config)
     await message.reply(f"✅ Пользователь с ID {new_user_id} добавлен в список разрешённых.")
 
-def parse_graph_args(text: str):
-    clean = re.sub(r'^/get_graph(@\w+)?', '', text).strip()
-    parts = clean.split(maxsplit=1)
-    if not parts:
-        return None, None
-    try:
-        minutes = int(parts[0])
-        if minutes <= 0:
-            return None, None
-    except ValueError:
-        return None, None
-
-    right_dt = None
-    if len(parts) > 1:
-        date_str = parts[1].strip()
-        try:
-            right_dt = datetime.strptime(date_str, '%Y.%m.%d-%H:%M')
-        except ValueError:
-            return None, None
-        right_dt = right_dt.astimezone()
-    return minutes, right_dt
-
-
 @dp.message(F.text.regexp(r'^/get_graph(@\w+)?( .+)?$'))
 async def cmd_get_graph(message: types.Message):
     if not is_user_allowed(message.from_user.id):
@@ -328,59 +364,30 @@ async def cmd_get_graph(message: types.Message):
     await message.reply(f"⏳ Строю графики за период: {time_range_str}")
 
     config = read_config()
-    groups = defaultdict(list)
-    for section in config.sections():
-        if section.startswith('Plot_'):
-            key = (
-                config.get(section, 'millUuid'),
-                config.get(section, 'info_host'),
-                config.get(section, 'info_port'),
-                config.get(section, 'download_host'),
-                config.get(section, 'download_port'),
-                config.getint(section, 'from_minutes'),
-                config.getint(section, 'to_minutes')
-            )
-            groups[key].append(section)
-        elif section.startswith('Subplot_'):
-            sections_str = config.get(section, 'sections')
-            first_plot = sections_str.split(',')[0].strip()
-            if config.has_section(first_plot):
-                key = (
-                    config.get(first_plot, 'millUuid'),
-                    config.get(first_plot, 'info_host'),
-                    config.get(first_plot, 'info_port'),
-                    config.get(first_plot, 'download_host'),
-                    config.get(first_plot, 'download_port'),
-                    config.getint(first_plot, 'from_minutes'),
-                    config.getint(first_plot, 'to_minutes')
-                )
-                groups[key].append(section)
-            else:
-                log_error(f"Секция {first_plot} не найдена для сабплота {section}")
-
-    if not groups:
-        await message.reply("❌ В конфиге нет секций Plot_ или Subplot_ для построения графиков.")
+    subplot_sections = [s for s in config.sections() if s.startswith('Subplot_')]
+    if not subplot_sections:
+        await message.reply("❌ В конфиге нет секций Subplot_ для построения графиков.")
         return
 
     plotter = PlotConfig('config.ini')
     sent_count = 0
-    for key, sections in groups.items():
-        mill_uuid, info_host, info_port, download_host, download_port, _, _ = key
+    for subplot_section in subplot_sections:
+        subplot_params = dict(config.items(subplot_section))
+        mill_uuid = subplot_params.get('millUuid')
+        host = subplot_params.get('host')
+        port = subplot_params.get('port')
+
         try:
             parser = Parser(
                 mill_uuid=mill_uuid,
+                host=host,
+                port=port,
                 from_minutes=0,
-                to_minutes=0,
-                host_info=info_host,
-                port_info=info_port,
-                host_download=download_host,
-                port_download=download_port
+                to_minutes=0
             )
-
             def fmt(dt):
                 dt_utc = dt.astimezone(timezone.utc)
                 return dt_utc.strftime('%Y-%m-%dT%H:%M:%S.') + f"{dt_utc.microsecond // 1000:03d}Z"
-
             parser.from_time = fmt(from_dt)
             parser.to_time = fmt(right_dt)
             parser.from_local = from_dt
@@ -388,27 +395,21 @@ async def cmd_get_graph(message: types.Message):
 
             df = parser.get_dataframe()
             if df.empty:
-                await message.reply(f"⚠️ Нет данных для группы {mill_uuid} за указанный период.")
+                await message.reply(f"⚠️ Нет данных для {subplot_section} за указанный период.")
                 continue
 
-            for section in sections:
-                if section.startswith('Plot_'):
-                    if config.getboolean(section, 'upload', fallback=True):
-                        saved_path = plotter.build_for_section(section, df)
-                        if saved_path:
-                            photo = FSInputFile(saved_path)
-                            name = config.get(section, 'msg')
-                            caption = f"[{time_range_str}] {name}"
-                            await message.answer_photo(photo, caption=caption)
-                            sent_count += 1
-                elif section.startswith('Subplot_'):
-                    saved_path = plotter.build_subplot(section, df)
-                    if saved_path:
-                        photo = FSInputFile(saved_path)
-                        name = config.get(section, 'msg')
-                        caption = f"[{time_range_str}] {name}"
-                        await message.answer_photo(photo, caption=caption)
-                        sent_count += 1
+            saved_path = plotter.build_subplot(subplot_section, df)
+            if saved_path:
+                photo = FSInputFile(saved_path)
+                name = subplot_params.get('msg', subplot_section)
+                caption = f"[{time_range_str}] {name}"
+                await message.answer_photo(photo, caption=caption)
+                sent_count += 1
         except Exception as e:
-            log_error(f"Ошибка при обработке группы {key}: {e}")
-            await message.reply(f"❌ Ошибка при загрузке данных для {mill_uuid}: {e}")
+            log_error(f"Ошибка при обработке {subplot_section}: {e}")
+            await message.reply(f"❌ Ошибка при загрузке данных для {subplot_section}: {e}")
+
+    if sent_count == 0:
+        await message.reply("❌ Не удалось построить ни одного графика.")
+    else:
+        await message.reply(f"✅ Отправлено {sent_count} сабплотов.")

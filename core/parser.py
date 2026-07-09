@@ -7,16 +7,12 @@ from core.tools import retry_request, log_error
 
 
 class Parser:
-    def __init__(self, mill_uuid, host_info, port_info, host_download, port_download, from_minutes, to_minutes):
+    def __init__(self, mill_uuid, host, port, from_minutes, to_minutes):
         self.mill_uuid = mill_uuid
-        self.info_host = host_info
-        self.info_port = port_info
-        self.download_host = host_download
-        self.download_port = port_download
-
+        self.host = host
+        self.port = port
         self.from_time, self.to_time, self.from_local, self.to_local = self._compute_time_range(from_minutes,
                                                                                                 to_minutes)
-
     def get_pretty_time_range(self):
         return (self.from_local.strftime('%Y-%m-%d %H:%M'),
                 self.to_local.strftime('%Y-%m-%d %H:%M'))
@@ -49,7 +45,7 @@ class Parser:
         return fmt(from_utc), fmt(to_utc), from_local, to_local
 
     def _get_zip_filename(self):
-        url = f"http://{self.info_host}:{self.info_port}/api/ProcessedData/csv"
+        url = f"http://{self.host}:{self.port}/api/ProcessedData/csv"
         params = {
             "millUuid": self.mill_uuid,
             "from": self.from_time,
@@ -66,8 +62,7 @@ class Parser:
 
     def _download_zip_bytes(self, file_name):
         encoded_name = requests.utils.quote(file_name, safe='')
-        url = (f"http://{self.download_host}:{self.download_port}"
-               f"/api/RawData/download?fileName={encoded_name}")
+        url = f"http://{self.host}:{self.port}/api/RawData/download?fileName={encoded_name}"
         try:
             resp = retry_request(lambda: requests.get(url))
             resp.raise_for_status()
