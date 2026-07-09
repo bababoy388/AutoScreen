@@ -69,7 +69,7 @@ class Parser:
         url = f"http://{self.host}:{self.port}/api/RawData/download"
         params = {
             "fileName": encoded_name,
-            "millUuid": self.mill_uuid  
+            "millUuid": self.mill_uuid
         }
         try:
             resp = retry_request(lambda: requests.get(url, params=params))
