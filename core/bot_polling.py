@@ -200,81 +200,107 @@ async def cmd_mode(message: types.Message):
 async def cmd_daily(message: types.Message):
     if not is_user_allowed(message.from_user.id):
         return
-    parts = message.text.split(maxsplit=2)
-    if len(parts) == 2:
-        time_str = parts[1].strip()
-        errors = []
-        for t in [x.strip() for x in time_str.split(',') if x.strip()]:
-            try:
-                datetime.strptime(t, "%H:%M")
-            except ValueError:
-                errors.append(t)
-        if errors:
-            await message.reply(f"❌ Неверный формат времени: {', '.join(errors)}. Используйте HH:MM")
-            return
-        config = read_config()
-        config['Schedule']['time'] = time_str
-        save_config(config)
-        await message.reply(f"✅ Глобальное время обновлено: {time_str}")
+    # Разбиваем только на команду и остаток
+    parts = message.text.split(maxsplit=1)
+    if len(parts) < 2:
+        await message.reply("❌ Укажите время (или сабплот и время), например:\n/daily 9:00\n/daily 9:00, 10:00\n/daily Subplot_1 9:00, 10:00")
+        return
+    args = parts[1].strip()
+
+    # Проверяем, есть ли сабплот (первый токен начинается с "Subplot_")
+    tokens = args.split(maxsplit=1)
+    if len(tokens) == 2 and tokens[0].startswith('Subplot_'):
+        subplot = tokens[0]
+        time_str = tokens[1]
+    else:
+        subplot = None
+        time_str = args
+
+    # Парсим времена: разделяем по запятым, обрезаем пробелы
+    times = [t.strip() for t in time_str.split(',') if t.strip()]
+    errors = []
+    for t in times:
+        try:
+            datetime.strptime(t, "%H:%M")
+        except ValueError:
+            errors.append(t)
+    if errors:
+        await message.reply(f"❌ Неверный формат времени: {', '.join(errors)}. Используйте HH:MM")
         return
 
-    if len(parts) == 3:
-        subplot = parts[1].strip()
-        time_str = parts[2].strip()
-        errors = []
-        for t in [x.strip() for x in time_str.split(',') if x.strip()]:
-            try:
-                datetime.strptime(t, "%H:%M")
-            except ValueError:
-                errors.append(t)
-        if errors:
-            await message.reply(f"❌ Неверный формат времени: {', '.join(errors)}. Используйте HH:MM")
-            return
-        config = read_config()
+    # Преобразуем в строку через запятую для сохранения
+    time_str_save = ', '.join(times)
+
+    config = read_config()
+    if subplot is None:
+        # Глобальное время
+        if 'Schedule' not in config:
+            config['Schedule'] = {}
+        config['Schedule']['time'] = time_str_save
+        save_config(config)
+        await message.reply(f"✅ Глобальное время обновлено: {time_str_save}")
+    else:
+        # Локальное время для сабплота
         if not config.has_section(subplot) or not subplot.startswith('Subplot_'):
             await message.reply(f"❌ Секция {subplot} не найдена.")
             return
-        config.set(subplot, 'time', time_str)
-
+        config.set(subplot, 'time', time_str_save)
         if not config.has_option(subplot, 'mode'):
             config.set(subplot, 'mode', 'daily')
         save_config(config)
-        await message.reply(f"✅ Время для {subplot} обновлено: {time_str}")
-        return
-
-    await message.reply("❌ Укажите время (или сабплот и время).")
+        await message.reply(f"✅ Время для {subplot} обновлено: {time_str_save}")
 
 @dp.message(Command("interval_m"))
 async def cmd_interval_m(message: types.Message):
     if not is_user_allowed(message.from_user.id):
         return
-    parts = message.text.split(maxsplit=2)
-    if len(parts) == 2:
-        minutes_str = parts[1].strip()
-        try:
-            minutes = int(minutes_str)
-            if minutes <= 0:
-                raise ValueError
-        except ValueError:
-            await message.reply("❌ Введите положительное целое число минут.")
+    parts = message.text.split(maxsplit=1)
+    if len(parts) < 2:
+        await message.reply("❌ Укажите количество минут (или сабплот и минуты), например:\n/interval_m 30\n/interval_m Subplot_1 30")
+        return
+    args = parts[1].strip()
+    tokens = args.split(maxsplit=1)
+    if len(tokens) == 2 and tokens[0].startswith('Subplot_'):
+        subplot = tokens[0]
+        param = tokens[1].strip()
+    else:
+        subplot = None
+        param = tokens[0].strip()
+
+    if param.lower() == 'global':
+        if subplot is None:
+            await message.reply("❌ Команда 'global' применима только к локальной настройке (укажите сабплот).")
             return
         config = read_config()
+        if not config.has_section(subplot) or not subplot.startswith('Subplot_'):
+            await message.reply(f"❌ Секция {subplot} не найдена.")
+            return
+        if config.has_option(subplot, 'interval_minutes'):
+            config.remove_option(subplot, 'interval_minutes')
+            save_config(config)
+            await message.reply(f"✅ Локальный интервал для {subplot} удалён, теперь используется глобальный.")
+        else:
+            await message.reply(f"ℹ️ В {subplot} не было локального интервала.")
+        return
+
+    try:
+        minutes = int(param)
+        if minutes <= 0:
+            raise ValueError
+    except ValueError:
+        await message.reply("❌ Введите положительное целое число минут.")
+        return
+
+    config = read_config()
+    if subplot is None:
+        # Глобальный интервал
+        if 'Schedule' not in config:
+            config['Schedule'] = {}
         config['Schedule']['interval_minutes'] = str(minutes)
         save_config(config)
         await message.reply(f"✅ Глобальный интервал обновлён на {minutes} минут")
-        return
-
-    if len(parts) == 3:
-        subplot = parts[1].strip()
-        minutes_str = parts[2].strip()
-        try:
-            minutes = int(minutes_str)
-            if minutes <= 0:
-                raise ValueError
-        except ValueError:
-            await message.reply("❌ Введите положительное целое число минут.")
-            return
-        config = read_config()
+    else:
+        # Локальный интервал для сабплота
         if not config.has_section(subplot) or not subplot.startswith('Subplot_'):
             await message.reply(f"❌ Секция {subplot} не найдена.")
             return
@@ -283,8 +309,6 @@ async def cmd_interval_m(message: types.Message):
             config.set(subplot, 'mode', 'interval')
         save_config(config)
         await message.reply(f"✅ Интервал для {subplot} обновлён на {minutes} минут")
-        return
-    await message.reply("❌ Укажите количество минут (или сабплот и минуты).")
 
 @dp.message(Command("reset_schedule"))
 async def cmd_reset_schedule(message: types.Message):
