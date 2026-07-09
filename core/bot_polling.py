@@ -367,6 +367,7 @@ async def cmd_add_user(message: types.Message):
 async def cmd_get_graph(message: types.Message):
     if not is_user_allowed(message.from_user.id):
         return
+
     minutes, right_dt = parse_graph_args(message.text)
     if minutes is None:
         await message.reply(
@@ -397,7 +398,7 @@ async def cmd_get_graph(message: types.Message):
     sent_count = 0
     for subplot_section in subplot_sections:
         subplot_params = dict(config.items(subplot_section))
-        mill_uuid = subplot_params.get('millUuid')
+        mill_uuid = subplot_params.get('milluuid')
         host = subplot_params.get('host')
         port = subplot_params.get('port')
 

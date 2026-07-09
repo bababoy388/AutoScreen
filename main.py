@@ -18,7 +18,7 @@ def get_subplot_schedule(subplot_params, global_config):
 
 def send_subplot(subplot_section, config, sender, plotter, now):
     subplot_params = dict(config.items(subplot_section))
-    mill_uuid = subplot_params.get('millUuid')
+    mill_uuid = subplot_params.get('milluuid')
     host = subplot_params.get('host')
     port = subplot_params.get('port')
     from_min = int(subplot_params.get('from_minutes', '-720'))
