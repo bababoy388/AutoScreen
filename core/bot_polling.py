@@ -108,7 +108,7 @@ async def cmd_list_subplots(message: types.Message):
     config = read_config()
     subplots = []
     for section in config.sections():
-        if section.startswith('Subplot_'):
+        if section.startswith('Factory_'):
             msg = config.get(section, 'msg', fallback='')
             subplots.append(f"{section} - {msg}")
     if not subplots:
@@ -133,7 +133,7 @@ async def cmd_info(message: types.Message):
     text += f"  Время: {global_time}\n"
     text += f"  Интервал: {global_interval} мин\n\n"
 
-    subplots = [s for s in config.sections() if s.startswith('Subplot_')]
+    subplots = [s for s in config.sections() if s.startswith('Factory_')]
     if subplots:
         text += "📋 Настройки заводов:\n"
         for sub in subplots:
@@ -157,7 +157,7 @@ async def cmd_info(message: types.Message):
             else:
                 text += f"  Время: {time_str} / Интервал: {interval_str} мин\n"
     else:
-        text += "❌ Секции Subplot_ не найдены."
+        text += "❌ Секции Factory_ не найдены."
 
     await message.answer(text)
 
@@ -188,7 +188,7 @@ async def cmd_mode(message: types.Message):
             await message.reply("❌ Доступные режимы: once, daily, interval")
             return
         config = read_config()
-        if not config.has_section(subplot) or not subplot.startswith('Subplot_'):
+        if not config.has_section(subplot) or not subplot.startswith('Factory_'):
             await message.reply(f"❌ Секция {subplot} не найдена.")
             return
         config.set(subplot, 'mode', mode)
@@ -207,9 +207,9 @@ async def cmd_daily(message: types.Message):
         return
     args = parts[1].strip()
 
-    # Проверяем, есть ли сабплот (первый токен начинается с "Subplot_")
+    # Проверяем, есть ли сабплот (первый токен начинается с "Factory_")
     tokens = args.split(maxsplit=1)
-    if len(tokens) == 2 and tokens[0].startswith('Subplot_'):
+    if len(tokens) == 2 and tokens[0].startswith('Factory_'):
         subplot = tokens[0]
         time_str = tokens[1]
     else:
@@ -241,7 +241,7 @@ async def cmd_daily(message: types.Message):
         await message.reply(f"✅ Глобальное время обновлено: {time_str_save}")
     else:
         # Локальное время для сабплота
-        if not config.has_section(subplot) or not subplot.startswith('Subplot_'):
+        if not config.has_section(subplot) or not subplot.startswith('Factory_'):
             await message.reply(f"❌ Секция {subplot} не найдена.")
             return
         config.set(subplot, 'time', time_str_save)
@@ -260,7 +260,7 @@ async def cmd_interval_m(message: types.Message):
         return
     args = parts[1].strip()
     tokens = args.split(maxsplit=1)
-    if len(tokens) == 2 and tokens[0].startswith('Subplot_'):
+    if len(tokens) == 2 and tokens[0].startswith('Factory_'):
         subplot = tokens[0]
         param = tokens[1].strip()
     else:
@@ -272,7 +272,7 @@ async def cmd_interval_m(message: types.Message):
             await message.reply("❌ Команда 'global' применима только к локальной настройке (укажите сабплот).")
             return
         config = read_config()
-        if not config.has_section(subplot) or not subplot.startswith('Subplot_'):
+        if not config.has_section(subplot) or not subplot.startswith('Factory_'):
             await message.reply(f"❌ Секция {subplot} не найдена.")
             return
         if config.has_option(subplot, 'interval_minutes'):
@@ -301,7 +301,7 @@ async def cmd_interval_m(message: types.Message):
         await message.reply(f"✅ Глобальный интервал обновлён на {minutes} минут")
     else:
         # Локальный интервал для сабплота
-        if not config.has_section(subplot) or not subplot.startswith('Subplot_'):
+        if not config.has_section(subplot) or not subplot.startswith('Factory_'):
             await message.reply(f"❌ Секция {subplot} не найдена.")
             return
         config.set(subplot, 'interval_minutes', str(minutes))
@@ -320,7 +320,7 @@ async def cmd_reset_schedule(message: types.Message):
         return
     subplot = parts[1].strip()
     config = read_config()
-    if not config.has_section(subplot) or not subplot.startswith('Subplot_'):
+    if not config.has_section(subplot) or not subplot.startswith('Factory_'):
         await message.reply(f"❌ Секция {subplot} не найдена.")
         return
 
@@ -389,9 +389,9 @@ async def cmd_get_graph(message: types.Message):
     await message.reply(f"⏳ Строю графики за период: {time_range_str}")
 
     config = read_config()
-    subplot_sections = [s for s in config.sections() if s.startswith('Subplot_')]
+    subplot_sections = [s for s in config.sections() if s.startswith('Factory_')]
     if not subplot_sections:
-        await message.reply("❌ В конфиге нет секций Subplot_ для построения графиков.")
+        await message.reply("❌ В конфиге нет секций Factory_ для построения графиков.")
         return
 
     plotter = PlotConfig('config.ini')
@@ -401,6 +401,7 @@ async def cmd_get_graph(message: types.Message):
         mill_uuid = subplot_params.get('milluuid')
         host = subplot_params.get('host')
         port = subplot_params.get('port')
+        name = subplot_params.get('msg')
 
         try:
             parser = Parser(
@@ -420,7 +421,7 @@ async def cmd_get_graph(message: types.Message):
 
             df = parser.get_dataframe()
             if df.empty:
-                await message.reply(f"⚠️ Нет данных для {subplot_section} за указанный период.")
+                await message.reply(f"⚠️ Нет данных для {name} за указанный период.")
                 continue
 
             saved_path = plotter.build_subplot(subplot_section, df)
@@ -433,8 +434,3 @@ async def cmd_get_graph(message: types.Message):
         except Exception as e:
             log_error(f"Ошибка при обработке {subplot_section}: {e}")
             await message.reply(f"❌ Ошибка при загрузке данных для {subplot_section}: {e}")
-
-    if sent_count == 0:
-        await message.reply("❌ Не удалось построить ни одного графика.")
-    else:
-        await message.reply(f"✅ Отправлено {sent_count} сабплотов.")
