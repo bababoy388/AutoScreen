@@ -16,7 +16,9 @@ def get_subplot_schedule(subplot_params, global_config):
     interval_min = int(subplot_params.get('interval_minutes') or global_config.get('interval_minutes', 60))
     return mode, time_str, interval_min
 
+
 def send_subplot(subplot_section, config, sender, plotter, now):
+    print(f"[DEBUG] send_subplot: начат для {subplot_section}")
     subplot_params = dict(config.items(subplot_section))
     mill_uuid = subplot_params.get('milluuid')
     host = subplot_params.get('host')
@@ -24,26 +26,38 @@ def send_subplot(subplot_section, config, sender, plotter, now):
     from_min = int(subplot_params.get('from_minutes', '-720'))
     to_min = int(subplot_params.get('to_minutes', '0'))
 
-    parser = Parser(
-        mill_uuid=mill_uuid,
-        host=host,
-        port=port,
-        from_minutes=from_min,
-        to_minutes=to_min
-    )
-    df = parser.get_dataframe()
-    if df.empty:
-        from_local_str = parser.from_local.strftime('%Y-%m-%d %H:%M')
-        to_local_str = parser.to_local.strftime('%Y-%m-%d %H:%M')
-        time_range = f"[{from_local_str} - {to_local_str}]"
-        msg_text = f"Нет данных для {subplot_section} за период {time_range}"
-        sender.send_message(msg_text)
-        return
+    print(f"[DEBUG] mill_uuid={mill_uuid}, host={host}, port={port}, from={from_min}, to={to_min}")
 
-    saved_path = plotter.build_subplot(subplot_section, df)
-    if saved_path:
-        caption = subplot_params.get('msg', subplot_section)
-        sender.send_photo(saved_path, caption=caption)
+    try:
+        parser = Parser(
+            mill_uuid=mill_uuid,
+            host=host,
+            port=port,
+            from_minutes=from_min,
+            to_minutes=to_min
+        )
+        df = parser.get_dataframe()
+        if df.empty:
+            from_local_str = parser.from_local.strftime('%Y-%m-%d %H:%M')
+            to_local_str = parser.to_local.strftime('%Y-%m-%d %H:%M')
+            time_range = f"[{from_local_str} - {to_local_str}]"
+            msg_text = f"Нет данных для {subplot_section} за период {time_range}"
+            print(f"[DEBUG] Нет данных, отправляем сообщение: {msg_text}")
+            sender.send_message(msg_text)
+            return
+
+        print(f"[DEBUG] DataFrame получен, строк: {len(df)}")
+        saved_path = plotter.build_subplot(subplot_section, df)
+        if saved_path:
+            caption = subplot_params.get('msg', subplot_section)
+            print(f"[DEBUG] График сохранён: {saved_path}, отправляем фото с подписью: {caption}")
+            sender.send_photo(saved_path, caption=caption)
+        else:
+            print("[DEBUG] build_subplot вернул None")
+    except Exception as e:
+        print(f"[ERROR] Ошибка в send_subplot: {e}")
+        log_error(f"Ошибка в send_subplot: {e}")
+        raise
 
 
 def worker_loop():
@@ -75,89 +89,155 @@ def worker_loop():
 
             plotter = PlotConfig('config.ini')
             now = datetime.now().astimezone()
+            print(f"\n[DEBUG] ====== Цикл в {now.strftime('%Y-%m-%d %H:%M:%S')} ======")
+            print(f"[DEBUG] Глобальные настройки: mode={global_schedule['mode']}, time={global_schedule['time']}, interval={global_schedule['interval_minutes']}")
 
             min_wait = None
             for subplot_section in subplot_sections:
                 subplot_params = dict(config.items(subplot_section))
                 mode, time_str, interval_min = get_subplot_schedule(subplot_params, global_schedule)
+                print(f"[DEBUG] {subplot_section}: mode={mode}, time_str='{time_str}', interval_min={interval_min}")
 
                 if mode == 'once':
                     if subplot_section not in last_sent:
+                        print(f"[DEBUG] Режим once: отправка для {subplot_section}")
                         try:
                             send_subplot(subplot_section, config, sender, plotter, now)
                             last_sent[subplot_section] = True
+                            print(f"[DEBUG] {subplot_section} отправлен (once)")
                         except Exception as e:
+                            print(f"[ERROR] Ошибка отправки {subplot_section}: {e}")
                             log_error(f"Ошибка отправки {subplot_section}: {e}")
+                    else:
+                        print(f"[DEBUG] {subplot_section} уже отправлен в режиме once, пропускаем")
                     continue
 
                 elif mode == 'interval':
                     last = last_sent.get(subplot_section)
                     if last is None:
+                        print(f"[DEBUG] Интервал: первая отправка для {subplot_section}")
                         try:
                             send_subplot(subplot_section, config, sender, plotter, now)
                             last_sent[subplot_section] = now
+                            print(f"[DEBUG] {subplot_section} отправлен (интервал, первый раз)")
                         except Exception as e:
+                            print(f"[ERROR] Ошибка отправки {subplot_section}: {e}")
                             log_error(f"Ошибка отправки {subplot_section}: {e}")
                         continue
                     else:
                         elapsed = (now - last).total_seconds()
                         if elapsed >= interval_min * 60:
+                            print(f"[DEBUG] Интервал: прошло {elapsed:.1f}с >= {interval_min*60}с, отправляем {subplot_section}")
                             try:
                                 send_subplot(subplot_section, config, sender, plotter, now)
                                 last_sent[subplot_section] = now
+                                print(f"[DEBUG] {subplot_section} отправлен (интервал)")
                             except Exception as e:
+                                print(f"[ERROR] Ошибка отправки {subplot_section}: {e}")
                                 log_error(f"Ошибка отправки {subplot_section}: {e}")
                             continue
                         else:
                             wait = interval_min * 60 - elapsed
+                            print(f"[DEBUG] Интервал: до следующей отправки {subplot_section} осталось {wait:.1f}с")
                             if min_wait is None or wait < min_wait:
                                 min_wait = wait
                             continue
 
                 elif mode == 'daily':
                     times = [t.strip() for t in time_str.split(',') if t.strip()]
+                    if not times:
+                        print(f"[WARN] Для {subplot_section} не задано время в daily режиме, пропускаем")
+                        continue
+
                     valid_times = []
                     for t in times:
                         try:
                             time_obj = datetime.strptime(t, '%H:%M').time()
                             valid_times.append(time_obj)
-                        except:
-                            pass
-                    if not valid_times:
-                        continue
-                    target_dts = []
-                    for t in valid_times:
-                        target = now.replace(hour=t.hour, minute=t.minute, second=0, microsecond=0)
-                        if target <= now:
-                            target += timedelta(days=1)
-                        target_dts.append(target)
-                    next_dt = min(target_dts)
-                    wait = (next_dt - now).total_seconds()
-                    if wait <= 0:
-                        try:
-                            send_subplot(subplot_section, config, sender, plotter, now)
-                            last_sent[subplot_section] = now.date()
                         except Exception as e:
-                            log_error(f"Ошибка отправки {subplot_section}: {e}")
-                    else:
+                            print(f"[WARN] Неверный формат времени '{t}': {e}")
+                    if not valid_times:
+                        print(f"[WARN] Нет валидных времён для {subplot_section}, пропускаем")
+                        continue
+
+                    today = now.date()
+                    last_date = last_sent.get(subplot_section)
+
+                    # Если уже отправляли сегодня – ждём завтра
+                    if last_date == today:
+                        print(f"[DEBUG] {subplot_section} уже отправлен сегодня ({today}), ждём завтра")
+                        # Вычисляем wait до ближайшего времени завтра
+                        target_dts = []
+                        for t in valid_times:
+                            target = now.replace(hour=t.hour, minute=t.minute, second=0, microsecond=0)
+                            if target <= now:
+                                target += timedelta(days=1)
+                            target_dts.append(target)
+                        next_dt = min(target_dts)
+                        wait = (next_dt - now).total_seconds()
+                        print(f"[DEBUG] {subplot_section} wait до завтрашней отправки: {wait:.1f}с (в {next_dt.strftime('%H:%M')})")
                         if min_wait is None or wait < min_wait:
                             min_wait = wait
+                        continue
 
+                    # Не отправляли сегодня – проверяем, есть ли время, которое уже прошло
+                    now_time = now.time()
+                    past_times = [t for t in valid_times if t <= now_time]
+                    future_times = [t for t in valid_times if t > now_time]
+
+                    if past_times:
+                        print(f"[DEBUG] {subplot_section}: время уже наступило сегодня ({', '.join([t.strftime('%H:%M') for t in past_times])}), отправляем сейчас")
+                        try:
+                            send_subplot(subplot_section, config, sender, plotter, now)
+                            last_sent[subplot_section] = today
+                            print(f"[DEBUG] {subplot_section} отправлен (daily, сразу)")
+                        except Exception as e:
+                            print(f"[ERROR] Ошибка отправки {subplot_section}: {e}")
+                            log_error(f"Ошибка отправки {subplot_section}: {e}")
+                            # Не обновляем last_sent, чтобы повторить в следующем цикле (но с защитой от спама – см. ниже)
+                        # После отправки (или ошибки) переходим к ожиданию завтрашнего дня
+                        # Вычисляем wait до ближайшего времени завтра
+                        target_dts = []
+                        for t in valid_times:
+                            target = now.replace(hour=t.hour, minute=t.minute, second=0, microsecond=0)
+                            if target <= now:
+                                target += timedelta(days=1)
+                            target_dts.append(target)
+                        next_dt = min(target_dts)
+                        wait = (next_dt - now).total_seconds()
+                        print(f"[DEBUG] {subplot_section} wait до завтрашней отправки: {wait:.1f}с (в {next_dt.strftime('%H:%M')})")
+                        if min_wait is None or wait < min_wait:
+                            min_wait = wait
+                        continue
+                    else:
+                        # Все времена сегодня ещё в будущем – ждём ближайшее
+                        next_time = min(future_times)
+                        target = now.replace(hour=next_time.hour, minute=next_time.minute, second=0, microsecond=0)
+                        wait = (target - now).total_seconds()
+                        print(f"[DEBUG] {subplot_section}: ближайшее время сегодня {next_time.strftime('%H:%M')}, wait={wait:.1f}с")
+                        if min_wait is None or wait < min_wait:
+                            min_wait = wait
+                        continue
+
+            # После обработки всех сабплотов
             if min_wait is None:
                 print("Все Subplot отработали или нет расписания, спим 5 сек...")
                 time.sleep(CHECK_INTERVAL)
                 continue
 
+            print(f"[DEBUG] Минимальное ожидание: {min_wait:.1f}с")
             remaining = min_wait
             while remaining > 0:
                 sleep_time = min(CHECK_INTERVAL, remaining)
+                print(f"[DEBUG] Спим {sleep_time:.1f}с (осталось {remaining:.1f}с)")
                 time.sleep(sleep_time)
                 remaining -= sleep_time
-                break
+                # break убран – теперь ждём корректно
 
         except KeyboardInterrupt:
             break
         except Exception as e:
+            print(f"[CRITICAL] Критическая ошибка в рабочем цикле: {e}")
             log_error(f"Критическая ошибка в рабочем цикле: {e}")
             time.sleep(WAIT_ON_ERROR)
 
