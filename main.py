@@ -24,6 +24,7 @@ def send_subplot(subplot_section, config, sender, plotter, now):
     port = subplot_params.get('port')
     from_min = int(subplot_params.get('from_minutes', '-720'))
     to_min = int(subplot_params.get('to_minutes', '0'))
+    name = subplot_params.get('msg')
 
 
     try:
@@ -41,7 +42,7 @@ def send_subplot(subplot_section, config, sender, plotter, now):
         time_range = f"[{from_local_str} - {to_local_str}]"
 
         if df.empty:
-            msg_text = f"Нет данных для {subplot_section} за период {time_range}"
+            msg_text = f"Нет данных для {name} за период {time_range}"
             sender.send_message(msg_text)
             return
 
@@ -58,7 +59,7 @@ def send_subplot(subplot_section, config, sender, plotter, now):
 def worker_loop():
     WAIT_ON_ERROR = 60
     CHECK_INTERVAL = 5
-    last_sent = {}  # {subplot: {'date': date, 'time': time_str}}
+    last_sent = {}
 
     while True:
         try:
@@ -75,44 +76,47 @@ def worker_loop():
             chat_id = config.get('Telegram', 'chat_id')
             sender = TelegramSender(token, chat_id)
 
-            subplot_sections = [s for s in config.sections() if s.startswith('Factory_')]
-            if not subplot_sections:
+            factory_sections = [s for s in config.sections() if s.startswith('Factory_')]
+            if not factory_sections:
                 time.sleep(CHECK_INTERVAL)
                 continue
 
             plotter = PlotConfig('config.ini')
             now = datetime.now().astimezone()
+            today = now.date()
+            now_time = now.time()
 
-            for subplot_section in subplot_sections:
-                subplot_params = dict(config.items(subplot_section))
+            for section in factory_sections:
+                subplot_params = dict(config.items(section))
                 mode, time_str, interval_min = get_subplot_schedule(subplot_params, global_schedule)
+                display_name = subplot_params.get('msg', section)
 
                 if mode == 'once':
-                    if subplot_section not in last_sent:
+                    if section not in last_sent or last_sent[section].get('type') != 'once':
                         try:
-                            send_subplot(subplot_section, config, sender, plotter, now)
-                            last_sent[subplot_section] = {'date': now.date(), 'time': time_str}
+                            send_subplot(section, config, sender, plotter, now)
+                            last_sent[section] = {'type': 'once', 'sent': True}
                         except Exception as e:
-                            log_error(f"Ошибка отправки {subplot_section}: {e}")
+                            log_error(f"Ошибка отправки {display_name} (once): {e}")
                     continue
 
                 elif mode == 'interval':
-                    last = last_sent.get(subplot_section)
-                    if last is None:
+                    last_entry = last_sent.get(section)
+                    if last_entry is None or last_entry.get('type') != 'interval':
                         try:
-                            send_subplot(subplot_section, config, sender, plotter, now)
-                            last_sent[subplot_section] = {'date': now, 'time': time_str}
+                            send_subplot(section, config, sender, plotter, now)
+                            last_sent[section] = {'type': 'interval', 'last_time': now}
                         except Exception as e:
-                            log_error(f"Ошибка отправки {subplot_section}: {e}")
+                            log_error(f"Ошибка отправки {display_name} (interval, first): {e}")
                     else:
-                        last_time = last['date']
+                        last_time = last_entry['last_time']
                         elapsed = (now - last_time).total_seconds()
                         if elapsed >= interval_min * 60:
                             try:
-                                send_subplot(subplot_section, config, sender, plotter, now)
-                                last_sent[subplot_section] = {'date': now, 'time': time_str}
+                                send_subplot(section, config, sender, plotter, now)
+                                last_sent[section]['last_time'] = now
                             except Exception as e:
-                                log_error(f"Ошибка отправки {subplot_section}: {e}")
+                                log_error(f"Ошибка отправки {display_name} (interval): {e}")
                     continue
 
                 elif mode == 'daily':
@@ -126,34 +130,29 @@ def worker_loop():
                             time_obj = datetime.strptime(t, '%H:%M').time()
                             valid_times.append(time_obj)
                         except Exception:
-                            pass
+                            print("Ошибка обработки таймера")
                     if not valid_times:
+                        print("Ошибка обработки всех таймеров")
                         continue
 
-                    today = now.date()
-                    last_entry = last_sent.get(subplot_section)
+                    if section not in last_sent or last_sent[section].get('type') != 'daily' or last_sent[section].get('date') != today:
+                        last_sent[section] = {'type': 'daily', 'date': today, 'sent_times': set()}
 
-                    if last_entry and last_entry['date'] == today and last_entry['time'] == time_str:
-                        continue
+                    sent_times = last_sent[section]['sent_times']
+                    current = now_time.replace(second=0, microsecond=0)
 
-                    now_time = now.time()
-                    should_send = any(t <= now_time for t in valid_times)
+                    for t in valid_times:
+                        time_key = t.strftime('%H:%M')
+                        if time_key in sent_times:
+                            continue
 
-                    if should_send:
-                        try:
-                            send_subplot(subplot_section, config, sender, plotter, now)
-                            last_sent[subplot_section] = {'date': today, 'time': time_str}
-                        except Exception as e:
-                            log_error(f"Ошибка отправки {subplot_section}: {e}")
-                    else:
-                        # Если все времена прошли, но отправки не было – отправляем сейчас (пропущенное время)
-                        future_times = [t for t in valid_times if t > now_time]
-                        if not future_times:
+                        if current.hour == t.hour and current.minute == t.minute:
                             try:
-                                send_subplot(subplot_section, config, sender, plotter, now)
-                                last_sent[subplot_section] = {'date': today, 'time': time_str}
+                                send_subplot(section, config, sender, plotter, now)
+                                sent_times.add(time_key)
+                                break
                             except Exception as e:
-                                log_error(f"Ошибка отправки {subplot_section}: {e}")
+                                log_error(f"Ошибка отправки {display_name} в {time_key}: {e}")
                     continue
 
             time.sleep(CHECK_INTERVAL)
