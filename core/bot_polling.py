@@ -38,25 +38,39 @@ def is_user_allowed(user_id):
 
 def parse_graph_args(text):
     clean = re.sub(r'^/get_graph(@\w+)?', '', text).strip()
-    parts = clean.split(maxsplit=1)
+    parts = clean.split()
     if not parts:
-        return None, None
+        return None, None, None
+
+    # Первый аргумент — минуты (обязательно)
     try:
         minutes = int(parts[0])
         if minutes <= 0:
-            return None, None
+            return None, None, None
     except ValueError:
-        return None, None
+        return None, None, None
 
     right_dt = None
-    if len(parts) > 1:
-        date_str = parts[1].strip()
+    factory_name = None
+
+    # Остальные аргументы (до двух)
+    for arg in parts[1:]:
+        # Пробуем распарсить как дату
         try:
-            right_dt = datetime.strptime(date_str, '%Y.%m.%d-%H:%M')
+            dt = datetime.strptime(arg, '%Y.%m.%d-%H:%M')
+            right_dt = dt.astimezone()
+            continue
         except ValueError:
-            return None, None
-        right_dt = right_dt.astimezone()
-    return minutes, right_dt
+            pass
+
+        # Если не дата, проверяем, не начинается ли с Factory_
+        if arg.startswith('Factory_'):
+            factory_name = arg
+        else:
+            # Если аргумент не дата и не завод — ошибка
+            return None, None, None
+
+    return minutes, right_dt, factory_name
 
 
 @dp.message(Command("start"))
@@ -368,12 +382,15 @@ async def cmd_get_graph(message: types.Message):
     if not is_user_allowed(message.from_user.id):
         return
 
-    minutes, right_dt = parse_graph_args(message.text)
+    minutes, right_dt, factory_name = parse_graph_args(message.text)
     if minutes is None:
         await message.reply(
-            "❌ Используйте: /get_graph <минуты> [дата в формате ГГГГ.ММ.ДД-ЧЧ:ММ]\n"
-            "Пример: /get_graph 720\n"
-            "Или: /get_graph 720 2026.06.24-14:00"
+            "❌ Используйте: /get_graph <минуты> [дата в формате ГГГГ.ММ.ДД-ЧЧ:ММ] [название завода]\n"
+            "Примеры:\n"
+            "/get_graph 720\n"
+            "/get_graph 720 2026.06.24-14:00\n"
+            "/get_graph 720 Factory_Ozerniy\n"
+            "/get_graph 720 2026.06.24-14:00 Factory_Ozerniy"
         )
         return
 
@@ -389,19 +406,31 @@ async def cmd_get_graph(message: types.Message):
     await message.reply(f"⏳ Строю графики за период: {time_range_str}")
 
     config = read_config()
-    subplot_sections = [s for s in config.sections() if s.startswith('Factory_')]
-    if not subplot_sections:
+
+    # Получаем список всех секций заводов
+    all_sections = [s for s in config.sections() if s.startswith('Factory_')]
+    if not all_sections:
         await message.reply("❌ В конфиге нет секций Factory_ для построения графиков.")
         return
 
+    # Если указан конкретный завод — проверяем его существование и фильтруем
+    if factory_name:
+        if not config.has_section(factory_name):
+            await message.reply(f"❌ Завод '{factory_name}' не найден в конфиге.")
+            return
+        sections_to_process = [factory_name]
+    else:
+        sections_to_process = all_sections
+
     plotter = PlotConfig('config.ini')
     sent_count = 0
-    for subplot_section in subplot_sections:
-        subplot_params = dict(config.items(subplot_section))
+
+    for section in sections_to_process:
+        subplot_params = dict(config.items(section))
         mill_uuid = subplot_params.get('milluuid')
         host = subplot_params.get('host')
         port = subplot_params.get('port')
-        name = subplot_params.get('msg')
+        name = subplot_params.get('msg', section)
 
         try:
             parser = Parser(
@@ -414,6 +443,7 @@ async def cmd_get_graph(message: types.Message):
             def fmt(dt):
                 dt_utc = dt.astimezone(timezone.utc)
                 return dt_utc.strftime('%Y-%m-%dT%H:%M:%S.') + f"{dt_utc.microsecond // 1000:03d}Z"
+
             parser.from_time = fmt(from_dt)
             parser.to_time = fmt(right_dt)
             parser.from_local = from_dt
@@ -424,13 +454,17 @@ async def cmd_get_graph(message: types.Message):
                 await message.reply(f"⚠️ Нет данных для {name} за указанный период.")
                 continue
 
-            saved_path = plotter.build_subplot(subplot_section, df)
+            saved_path = plotter.build_subplot(section, df)
             if saved_path:
                 photo = FSInputFile(saved_path)
-                name = subplot_params.get('msg', subplot_section)
                 caption = f"[{time_range_str}] {name}"
                 await message.answer_photo(photo, caption=caption)
                 sent_count += 1
         except Exception as e:
-            log_error(f"Ошибка при обработке {subplot_section}: {e}")
-            await message.reply(f"❌ Ошибка при загрузке данных для {subplot_section}: {e}")
+            log_error(f"Ошибка при обработке {section}: {e}")
+            await message.reply(f"❌ Ошибка при загрузке данных для {section}: {e}")
+
+    if sent_count == 0:
+        await message.reply("❌ Не удалось построить ни одного графика.")
+    else:
+        await message.reply(f"✅ Отправлено {sent_count} сабплотов.")
