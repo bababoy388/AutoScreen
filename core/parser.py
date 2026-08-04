@@ -13,6 +13,7 @@ class Parser:
         self.port = port
         self.from_time, self.to_time, self.from_local, self.to_local = self._compute_time_range(from_minutes,
                                                                                                 to_minutes)
+
     def get_pretty_time_range(self):
         return (self.from_local.strftime('%Y-%m-%d %H:%M'),
                 self.to_local.strftime('%Y-%m-%d %H:%M'))
@@ -52,7 +53,7 @@ class Parser:
             "to": self.to_time
         }
         try:
-            resp = retry_request(lambda: requests.get(url, params=params))
+            resp = retry_request(lambda: requests.get(url, params=params, timeout=600))
             resp.raise_for_status()
             data = resp.json()
             return data["fileName"]
@@ -72,7 +73,7 @@ class Parser:
             "millUuid": self.mill_uuid
         }
         try:
-            resp = retry_request(lambda: requests.get(url, params=params))
+            resp = retry_request(lambda: requests.get(url, params=params, timeout=600))
             resp.raise_for_status()
             return io.BytesIO(resp.content)
         except Exception as e:
