@@ -463,8 +463,3 @@ async def cmd_get_graph(message: types.Message):
         except Exception as e:
             log_error(f"Ошибка при обработке {section}: {e}")
             await message.reply(f"❌ Ошибка при загрузке данных для {section}: {e}")
-
-    if sent_count == 0:
-        await message.reply("❌ Не удалось построить ни одного графика.")
-    else:
-        await message.reply(f"✅ Отправлено {sent_count} сабплотов.")
