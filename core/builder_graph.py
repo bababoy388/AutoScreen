@@ -93,7 +93,6 @@ class PlotConfig:
                     log_error(f"Секция '{section}' не найдена, пропуск в сабплоте")
                     continue
                 ax_main = axes_flat[idx]
-                # Строим на переданной оси (с возможными дополнительными осями twinx)
                 success = self._create_axes_for_section(section, df, external_ax=ax_main)
                 if not success:
                     log_error(f"Не удалось построить секцию '{section}' в сабплоте")
@@ -124,73 +123,71 @@ class PlotConfig:
                 plt.close('all')
 
     def _create_axes_for_section(self, section, df, external_ax=None, return_fig=False):
-        # Определяем тип осей
         left_str = self.config.get(section, 'left_columns', fallback=None)
         right1_str = self.config.get(section, 'right1_columns', fallback=None)
         right2_str = self.config.get(section, 'right2_columns', fallback=None)
         if not right1_str:
             right1_str = self.config.get(section, 'right_columns', fallback=None)
 
-        # Получаем данные колонок
         if left_str and (right1_str or right2_str):
-            # Многоосевой режим
             return self._build_multi_axes(section, df, left_str, right1_str, right2_str,
                                           external_ax, return_fig)
         else:
-            # Одноосевой режим
             return self._build_single_axis(section, df, external_ax, return_fig)
 
-    # ------------------ НОВЫЙ МЕТОД ДЛЯ РАЗБИЕНИЯ НА ЧАНКИ ------------------
-    def _get_continuous_chunks(self, df, gap_minutes=None):
+    # ---------- НОВЫЙ МЕТОД: вставка NaN в местах разрывов ----------
+    def _insert_nans_at_gaps(self, df, columns, gap_minutes=None):
         """
-        Разбивает DataFrame на части, где разница между временными метками индекса
-        не превышает заданного порога (gap_minutes). Возвращает список под-DataFrame.
-        Если индекс не является datetime, возвращает [df] (без разбиения).
+        Возвращает новый DataFrame (только указанные колонки) с вставленными строками
+        со значениями NaN между точками, где временной интервал превышает gap_minutes.
+        Если индекс не datetime, возвращает копию df[columns] без изменений.
         """
         if gap_minutes is None:
             gap_minutes = self.MAX_GAP_MINUTES
-        if not isinstance(df.index, pd.DatetimeIndex):
-            # Если индекс не временной, разбиение невозможно — возвращаем исходный DF
-            return [df]
-        # Вычисляем разницу между соседними индексами
-        diffs = df.index.to_series().diff()
-        # Находим индексы, где разница превышает порог
-        split_points = diffs[diffs > pd.Timedelta(minutes=gap_minutes)].index
-        if len(split_points) == 0:
-            return [df]
-        # Разбиваем по найденным точкам
-        chunks = []
-        start = 0
-        for split_idx in split_points:
-            # находим позицию (номер строки) точки разрыва
-            pos = df.index.get_loc(split_idx)
-            if pos > start:
-                chunks.append(df.iloc[start:pos])
-            start = pos
-        # последний кусок
-        if start < len(df):
-            chunks.append(df.iloc[start:])
-        # отбрасываем пустые чанки
-        return [chunk for chunk in chunks if not chunk.empty]
 
-    # ------------------ НОВЫЙ МЕТОД ДЛЯ ОТРИСОВКИ С РАЗРЫВАМИ ------------------
+        # Работаем только с нужными колонками
+        data = df[columns].copy()
+        if not isinstance(data.index, pd.DatetimeIndex):
+            return data
+
+        new_rows = []      # список строк (каждая как список значений)
+        new_index = []     # список индексов
+
+        prev_idx = None
+        for idx, row in data.iterrows():
+            if prev_idx is not None:
+                diff = idx - prev_idx
+                if diff > pd.Timedelta(minutes=gap_minutes):
+                    # Вставляем NaN-строку между prev_idx и idx
+                    # Используем индекс чуть больше prev_idx (микросекунды)
+                    gap_idx = prev_idx + pd.Timedelta(microseconds=1)
+                    new_index.append(gap_idx)
+                    new_rows.append([pd.NA] * len(columns))
+            new_index.append(idx)
+            new_rows.append(row.tolist())
+            prev_idx = idx
+
+        # Создаём новый DataFrame с теми же колонками
+        new_df = pd.DataFrame(new_rows, index=new_index, columns=columns)
+        return new_df
+
+    # ---------- ОБНОВЛЁННЫЙ МЕТОД: построение с разрывами через NaN ----------
     def _plot_columns_with_gaps(self, ax, df, columns, kind, colors=None):
         """
-        Рисует график для указанных столбцов с учётом временных разрывов.
-        Для линейных графиков (kind='line') применяет разбиение на сегменты,
-        для других типов (bar и т.п.) рисует целиком.
+        Рисует график для указанных столбцов.
+        Для линейных графиков с временным индексом вставляет NaN в местах разрывов > 5 минут
+        и рисует всё одним вызовом plot, что гарантирует единый цвет для каждой колонки.
+        Для остальных случаев рисует напрямую.
         """
         if kind == 'line' and isinstance(df.index, pd.DatetimeIndex):
-            chunks = self._get_continuous_chunks(df)
-            for chunk in chunks:
-                if not chunk.empty:
-                    # Рисуем каждый чанк отдельно; цвета передаются те же для единообразия
-                    chunk[columns].plot(kind=kind, ax=ax, legend=False, color=colors)
+            # Подготавливаем данные с NaN-вставками
+            df_plot = self._insert_nans_at_gaps(df, columns)
+            df_plot.plot(kind=kind, ax=ax, legend=False, color=colors)
         else:
-            # Для bar и других типов разбиение не применяется
+            # Для bar и других типов разрывы не применяем
             df[columns].plot(kind=kind, ax=ax, legend=False, color=colors)
 
-    # ------------------ МОДИФИЦИРОВАННЫЙ МЕТОД (одноосевой) ------------------
+    # ------------------ ОДНООСЕВОЙ РЕЖИМ (без изменений, но использует новый метод) ------------------
     def _build_single_axis(self, section, df, external_ax, return_fig):
         cols_str = self.config.get(section, 'columns')
         columns = [c.strip() for c in cols_str.split(',')]
@@ -211,7 +208,7 @@ class PlotConfig:
             fig = external_ax.figure
             ax = external_ax
 
-        # Заменяем прямой вызов plot на функцию с разбиением
+        # Используем новый метод с NaN
         self._plot_columns_with_gaps(ax, df, columns, kind, colors)
 
         if ylabel:
@@ -223,7 +220,7 @@ class PlotConfig:
             return fig, ax
         return True
 
-    # ------------------ МОДИФИЦИРОВАННЫЙ МЕТОД (многоосевой) ------------------
+    # ------------------ МНОГООСЕВОЙ РЕЖИМ (также обновлён) ------------------
     def _build_multi_axes(self, section, df, left_str, right1_str, right2_str,
                           external_ax, return_fig):
         left_cols = [c.strip() for c in left_str.split(',')]
