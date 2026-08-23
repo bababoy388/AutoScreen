@@ -2,6 +2,8 @@ import configparser
 import os
 import matplotlib.pyplot as plt
 import pandas as pd
+from matplotlib.lines import Line2D
+from itertools import cycle
 from core.tools import log_error
 
 
@@ -140,7 +142,7 @@ class PlotConfig:
             # Одноосевой режим
             return self._build_single_axis(section, df, external_ax, return_fig)
 
-    # ------------------ НОВЫЙ МЕТОД ДЛЯ РАЗБИЕНИЯ НА ЧАНКИ ------------------
+    # ------------------ РАЗБИЕНИЕ НА ЧАНКИ ------------------
     def _get_continuous_chunks(self, df, gap_minutes=None):
         """
         Разбивает DataFrame на части, где разница между временными метками индекса
@@ -173,24 +175,22 @@ class PlotConfig:
         # отбрасываем пустые чанки
         return [chunk for chunk in chunks if not chunk.empty]
 
-    # ------------------ НОВЫЙ МЕТОД ДЛЯ ОТРИСОВКИ С РАЗРЫВАМИ ------------------
+    # ------------------ ОТРИСОВКА С РАЗРЫВАМИ (без легенды) ------------------
     def _plot_columns_with_gaps(self, ax, df, columns, kind, colors=None):
         """
         Рисует график для указанных столбцов с учётом временных разрывов.
-        Для линейных графиков (kind='line') применяет разбиение на сегменты,
-        для других типов (bar и т.п.) рисует целиком.
+        Легенда всегда отключена (legend=False), чтобы мы могли создать её вручную позже.
         """
         if kind == 'line' and isinstance(df.index, pd.DatetimeIndex):
             chunks = self._get_continuous_chunks(df)
             for chunk in chunks:
                 if not chunk.empty:
-                    # Рисуем каждый чанк отдельно; цвета передаются те же для единообразия
                     chunk[columns].plot(kind=kind, ax=ax, legend=False, color=colors)
         else:
-            # Для bar и других типов разбиение не применяется
+            # Для bar и других типов разбиение не применяем
             df[columns].plot(kind=kind, ax=ax, legend=False, color=colors)
 
-    # ------------------ МОДИФИЦИРОВАННЫЙ МЕТОД (одноосевой) ------------------
+    # ------------------ ОДНООСЕВОЙ РЕЖИМ (с ручной легендой) ------------------
     def _build_single_axis(self, section, df, external_ax, return_fig):
         cols_str = self.config.get(section, 'columns')
         columns = [c.strip() for c in cols_str.split(',')]
@@ -211,19 +211,38 @@ class PlotConfig:
             fig = external_ax.figure
             ax = external_ax
 
-        # Заменяем прямой вызов plot на функцию с разбиением
+        # Рисуем все чанки без легенды
         self._plot_columns_with_gaps(ax, df, columns, kind, colors)
 
         if ylabel:
             ax.set_ylabel(ylabel)
-        if len(columns) > 1:
-            ax.legend(loc='best')
+
+        # --- СОЗДАЁМ ЛЕГЕНДУ ВРУЧНУЮ ---
+        if len(columns) > 0:
+            # Если цвета не заданы, генерируем стандартные
+            if colors is None:
+                default_colors = plt.rcParams['axes.prop_cycle'].by_key()['color']
+                color_cycle = cycle(default_colors)
+                colors = [next(color_cycle) for _ in columns]
+            else:
+                # Если заданы, но не хватает, дополняем стандартными
+                if len(colors) < len(columns):
+                    default_colors = plt.rcParams['axes.prop_cycle'].by_key()['color']
+                    extra = cycle(default_colors)
+                    while len(colors) < len(columns):
+                        colors.append(next(extra))
+                elif len(colors) > len(columns):
+                    colors = colors[:len(columns)]
+
+            handles = [Line2D([0], [0], color=color, lw=2) for color in colors]
+            labels = columns
+            ax.legend(handles, labels, loc='best')
 
         if return_fig:
             return fig, ax
         return True
 
-    # ------------------ МОДИФИЦИРОВАННЫЙ МЕТОД (многоосевой) ------------------
+    # ------------------ МНОГООСЕВОЙ РЕЖИМ (с ручной легендой) ------------------
     def _build_multi_axes(self, section, df, left_str, right1_str, right2_str,
                           external_ax, return_fig):
         left_cols = [c.strip() for c in left_str.split(',')]
@@ -252,47 +271,65 @@ class PlotConfig:
         if right2_cols:
             ax_right2 = ax_left.twinx()
             ax_right2.spines['right'].set_position(('axes', 1 + 0.08))
+            # Цвет для правой оси (если есть)
             if colors and len(colors) > len(left_cols) + len(right1_cols):
                 color2 = colors[len(left_cols) + len(right1_cols)]
                 ax_right2.tick_params(axis='y', labelcolor=color2)
                 ax_right2.yaxis.label.set_color(color2)
 
+        # Храним пары (ось, список колонок) для последующего построения и сбора цветов
+        axes_columns = [(ax_left, left_cols)]
+        if ax_right1:
+            axes_columns.append((ax_right1, right1_cols))
+        if ax_right2:
+            axes_columns.append((ax_right2, right2_cols))
+
+        # Если цвета не заданы, генерируем стандартные для всех колонок
+        if colors is None:
+            default_colors = plt.rcParams['axes.prop_cycle'].by_key()['color']
+            color_cycle = cycle(default_colors)
+            colors = [next(color_cycle) for _ in all_cols]
+        else:
+            # Дополняем или обрезаем до нужного количества
+            if len(colors) < len(all_cols):
+                default_colors = plt.rcParams['axes.prop_cycle'].by_key()['color']
+                extra = cycle(default_colors)
+                while len(colors) < len(all_cols):
+                    colors.append(next(extra))
+            elif len(colors) > len(all_cols):
+                colors = colors[:len(all_cols)]
+
+        # Строим графики для каждой оси, передавая соответствующие цвета
         color_idx = 0
-        if left_cols:
-            c = colors[color_idx:color_idx + len(left_cols)] if colors else None
-            self._plot_columns_with_gaps(ax_left, df, left_cols, kind, c)
-            color_idx += len(left_cols)
+        for ax, cols in axes_columns:
+            if cols:
+                col_colors = colors[color_idx:color_idx + len(cols)]
+                self._plot_columns_with_gaps(ax, df, cols, kind, col_colors)
+                color_idx += len(cols)
+
+        # Устанавливаем подписи осей
         left_ylabel = self.config.get(section, 'left_ylabel', fallback='')
         if left_ylabel:
             ax_left.set_ylabel(left_ylabel)
 
-        if right1_cols and ax_right1:
-            c = colors[color_idx:color_idx + len(right1_cols)] if colors else None
-            self._plot_columns_with_gaps(ax_right1, df, right1_cols, kind, c)
-            color_idx += len(right1_cols)
+        if ax_right1:
             right1_ylabel = self.config.get(section, 'right1_ylabel', fallback='')
             if not right1_ylabel:
                 right1_ylabel = self.config.get(section, 'right_ylabel', fallback='')
             if right1_ylabel:
                 ax_right1.set_ylabel(right1_ylabel)
 
-        if right2_cols and ax_right2:
-            c = colors[color_idx:color_idx + len(right2_cols)] if colors else None
-            self._plot_columns_with_gaps(ax_right2, df, right2_cols, kind, c)
+        if ax_right2:
             right2_ylabel = self.config.get(section, 'right2_ylabel', fallback='')
             if right2_ylabel:
                 ax_right2.set_ylabel(right2_ylabel)
                 ax_right2.yaxis.label.set_color('black')
                 ax_right2.tick_params(axis='y', labelcolor='black')
 
-        lines, labels = [], []
-        for ax in [ax_left, ax_right1, ax_right2]:
-            if ax:
-                l, lab = ax.get_legend_handles_labels()
-                lines.extend(l)
-                labels.extend(lab)
-        if lines:
-            ax_left.legend(lines, labels, loc='best')
+        # --- СОЗДАЁМ ОБЩУЮ ЛЕГЕНДУ ВРУЧНУЮ (на главной оси) ---
+        handles = [Line2D([0], [0], color=color, lw=2) for color in colors]
+        labels = all_cols
+        ax_left.legend(handles, labels, loc='best')
 
         fig.tight_layout()
 
