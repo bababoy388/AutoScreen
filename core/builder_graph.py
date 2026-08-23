@@ -1,6 +1,7 @@
 import configparser
 import os
 import matplotlib.pyplot as plt
+import pandas as pd
 from core.tools import log_error
 
 
@@ -9,6 +10,8 @@ class PlotConfig:
         self.config = configparser.ConfigParser(interpolation=None)
         self.config.read(config_path, encoding='utf-8')
         self.output_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'graphs')
+        # Максимальный допустимый разрыв между точками (в минутах)
+        self.MAX_GAP_MINUTES = 5
 
     def build_for_section(self, section, df):
         try:
@@ -137,6 +140,57 @@ class PlotConfig:
             # Одноосевой режим
             return self._build_single_axis(section, df, external_ax, return_fig)
 
+    # ------------------ НОВЫЙ МЕТОД ДЛЯ РАЗБИЕНИЯ НА ЧАНКИ ------------------
+    def _get_continuous_chunks(self, df, gap_minutes=None):
+        """
+        Разбивает DataFrame на части, где разница между временными метками индекса
+        не превышает заданного порога (gap_minutes). Возвращает список под-DataFrame.
+        Если индекс не является datetime, возвращает [df] (без разбиения).
+        """
+        if gap_minutes is None:
+            gap_minutes = self.MAX_GAP_MINUTES
+        if not isinstance(df.index, pd.DatetimeIndex):
+            # Если индекс не временной, разбиение невозможно — возвращаем исходный DF
+            return [df]
+        # Вычисляем разницу между соседними индексами
+        diffs = df.index.to_series().diff()
+        # Находим индексы, где разница превышает порог
+        split_points = diffs[diffs > pd.Timedelta(minutes=gap_minutes)].index
+        if len(split_points) == 0:
+            return [df]
+        # Разбиваем по найденным точкам
+        chunks = []
+        start = 0
+        for split_idx in split_points:
+            # находим позицию (номер строки) точки разрыва
+            pos = df.index.get_loc(split_idx)
+            if pos > start:
+                chunks.append(df.iloc[start:pos])
+            start = pos
+        # последний кусок
+        if start < len(df):
+            chunks.append(df.iloc[start:])
+        # отбрасываем пустые чанки
+        return [chunk for chunk in chunks if not chunk.empty]
+
+    # ------------------ НОВЫЙ МЕТОД ДЛЯ ОТРИСОВКИ С РАЗРЫВАМИ ------------------
+    def _plot_columns_with_gaps(self, ax, df, columns, kind, colors=None):
+        """
+        Рисует график для указанных столбцов с учётом временных разрывов.
+        Для линейных графиков (kind='line') применяет разбиение на сегменты,
+        для других типов (bar и т.п.) рисует целиком.
+        """
+        if kind == 'line' and isinstance(df.index, pd.DatetimeIndex):
+            chunks = self._get_continuous_chunks(df)
+            for chunk in chunks:
+                if not chunk.empty:
+                    # Рисуем каждый чанк отдельно; цвета передаются те же для единообразия
+                    chunk[columns].plot(kind=kind, ax=ax, legend=False, color=colors)
+        else:
+            # Для bar и других типов разбиение не применяется
+            df[columns].plot(kind=kind, ax=ax, legend=False, color=colors)
+
+    # ------------------ МОДИФИЦИРОВАННЫЙ МЕТОД (одноосевой) ------------------
     def _build_single_axis(self, section, df, external_ax, return_fig):
         cols_str = self.config.get(section, 'columns')
         columns = [c.strip() for c in cols_str.split(',')]
@@ -149,7 +203,6 @@ class PlotConfig:
         ylabel = self.config.get(section, 'ylabel', fallback='')
         colors = self._get_colors_for_section(section)
 
-        # Создаём фигуру, если нет внешней оси
         if external_ax is None:
             figsize_str = self.config.get(section, 'figsize')
             figsize = tuple(map(int, figsize_str.split(',')))
@@ -158,10 +211,8 @@ class PlotConfig:
             fig = external_ax.figure
             ax = external_ax
 
-        if colors:
-            df[columns].plot(kind=kind, ax=ax, legend=False, color=colors[:len(columns)])
-        else:
-            df[columns].plot(kind=kind, ax=ax, legend=False)
+        # Заменяем прямой вызов plot на функцию с разбиением
+        self._plot_columns_with_gaps(ax, df, columns, kind, colors)
 
         if ylabel:
             ax.set_ylabel(ylabel)
@@ -172,6 +223,7 @@ class PlotConfig:
             return fig, ax
         return True
 
+    # ------------------ МОДИФИЦИРОВАННЫЙ МЕТОД (многоосевой) ------------------
     def _build_multi_axes(self, section, df, left_str, right1_str, right2_str,
                           external_ax, return_fig):
         left_cols = [c.strip() for c in left_str.split(',')]
@@ -199,7 +251,6 @@ class PlotConfig:
         ax_right2 = None
         if right2_cols:
             ax_right2 = ax_left.twinx()
-
             ax_right2.spines['right'].set_position(('axes', 1 + 0.08))
             if colors and len(colors) > len(left_cols) + len(right1_cols):
                 color2 = colors[len(left_cols) + len(right1_cols)]
@@ -209,7 +260,7 @@ class PlotConfig:
         color_idx = 0
         if left_cols:
             c = colors[color_idx:color_idx + len(left_cols)] if colors else None
-            df[left_cols].plot(kind=kind, ax=ax_left, legend=False, color=c)
+            self._plot_columns_with_gaps(ax_left, df, left_cols, kind, c)
             color_idx += len(left_cols)
         left_ylabel = self.config.get(section, 'left_ylabel', fallback='')
         if left_ylabel:
@@ -217,7 +268,7 @@ class PlotConfig:
 
         if right1_cols and ax_right1:
             c = colors[color_idx:color_idx + len(right1_cols)] if colors else None
-            df[right1_cols].plot(kind=kind, ax=ax_right1, legend=False, color=c)
+            self._plot_columns_with_gaps(ax_right1, df, right1_cols, kind, c)
             color_idx += len(right1_cols)
             right1_ylabel = self.config.get(section, 'right1_ylabel', fallback='')
             if not right1_ylabel:
@@ -227,11 +278,10 @@ class PlotConfig:
 
         if right2_cols and ax_right2:
             c = colors[color_idx:color_idx + len(right2_cols)] if colors else None
-            df[right2_cols].plot(kind=kind, ax=ax_right2, legend=False, color=c)
+            self._plot_columns_with_gaps(ax_right2, df, right2_cols, kind, c)
             right2_ylabel = self.config.get(section, 'right2_ylabel', fallback='')
             if right2_ylabel:
                 ax_right2.set_ylabel(right2_ylabel)
-
                 ax_right2.yaxis.label.set_color('black')
                 ax_right2.tick_params(axis='y', labelcolor='black')
 
