@@ -1,4 +1,5 @@
 import io
+import socket
 import zipfile
 import pandas as pd
 import requests
@@ -13,6 +14,14 @@ class Parser:
         self.port = port
         self.from_time, self.to_time, self.from_local, self.to_local = self._compute_time_range(from_minutes,
                                                                                                 to_minutes)
+
+    def ping(self, timeout=15):
+        """Проверяет доступность хоста и порта. Возвращает True, если соединение установлено."""
+        try:
+            with socket.create_connection((self.host, int(self.port)), timeout=timeout):
+                return True
+        except (socket.timeout, socket.error, ValueError):
+            return False
 
     def get_pretty_time_range(self):
         return (self.from_local.strftime('%Y-%m-%d %H:%M'),

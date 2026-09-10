@@ -35,6 +35,13 @@ def send_subplot(subplot_section, config, sender, plotter, now):
             from_minutes=from_min,
             to_minutes=to_min
         )
+
+        # Проверка доступности мельницы
+        if not parser.ping():
+            msg_text = f"Мельница {name} сейчас недоступна"
+            sender.send_message(msg_text)
+            return
+
         df = parser.get_dataframe()
 
         from_local_str = parser.from_local.strftime('%Y-%m-%d %H:%M')

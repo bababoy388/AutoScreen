@@ -440,6 +440,12 @@ async def cmd_get_graph(message: types.Message):
                 from_minutes=0,
                 to_minutes=0
             )
+
+            # Проверка доступности мельницы
+            if not parser.ping():
+                await message.reply(f"⚠️ Мельница {name} сейчас недоступна.")
+                continue
+
             def fmt(dt):
                 dt_utc = dt.astimezone(timezone.utc)
                 return dt_utc.strftime('%Y-%m-%dT%H:%M:%S.') + f"{dt_utc.microsecond // 1000:03d}Z"
