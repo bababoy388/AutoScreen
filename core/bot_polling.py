@@ -1,6 +1,7 @@
 import configparser
 from datetime import datetime, timedelta, timezone
 import re
+import asyncio
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
 from aiogram.client.session.aiohttp import AiohttpSession
@@ -104,6 +105,7 @@ async def cmd_help(message: types.Message):
         "/interval_m <Subplot> <минуты> - установить интервал для конкретного завода\n"
         "/change_graph <Subplot> <параметр> <значение> - изменить параметр завода\n"
         "/add_user ID - добавить нового пользователя\n"
+        "/get_raw - получить сырые данные"
         "/list_subplots - показать все заводы (сабплоты)\n"
         "/get_graph N [дата] - получить графики за N минут до указанной даты (или сейчас)\n"
         "Пример: /get_graph 720\n"
