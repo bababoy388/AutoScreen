@@ -25,6 +25,12 @@ def read_config():
     config.read(CONFIG_PATH, encoding='utf-8')
     return config
 
+def get_limit(config, key, default):
+    try:
+        return int(config.get('Limits', key, fallback=str(default)))
+    except (ValueError, configparser.Error):
+        return default
+
 def save_config(config):
     with open(CONFIG_PATH, 'w', encoding='utf-8') as f:
         config.write(f)
@@ -93,25 +99,242 @@ async def cmd_help(message: types.Message):
         return
 
     text = (
-        "📋 Доступные команды:\n"
-        "/start - приветствие / получить свой ID\n"
-        "/help - список команд\n"
-        "/info - показать текущие настройки расписания\n"
-        "/mode [режим] - установить глобальный режим (once/daily/interval)\n"
-        "/mode <Subplot> <режим> - установить режим для конкретного завода\n"
-        "/daily [время] - установить глобальное время (HH:MM или через запятую)\n"
-        "/daily <Subplot> <время> - установить время для конкретного завода\n"
-        "/interval_m [минуты] - установить глобальный интервал\n"
-        "/interval_m <Subplot> <минуты> - установить интервал для конкретного завода\n"
-        "/change_graph <Subplot> <параметр> <значение> - изменить параметр завода\n"
-        "/add_user ID - добавить нового пользователя\n"
-        "/get_raw - получить сырые данные"
-        "/list_subplots - показать все заводы (сабплоты)\n"
-        "/get_graph N [дата] - получить графики за N минут до указанной даты (или сейчас)\n"
-        "Пример: /get_graph 720\n"
-        "Или: /get_graph 720 2026.06.24-14:00"
+        "📋 Доступные команды:\n\n"
+        "Основное\n"
+        "/start — приветствие / получить свой ID\n"
+        "/help — список команд\n"
+        "/info — показать текущие настройки расписания\n"
+        "/list_subplots — показать все заводы (секции Factory_)\n\n"
+        "Расписание графиков\n"
+        "/mode [режим] — установить глобальный режим (once/daily/interval)\n"
+        "/mode <Factory_...> <режим> — установить режим для конкретного завода\n"
+        "/daily [HH:MM, HH:MM] — установить глобальное время отправки\n"
+        "/daily <Factory_...> [HH:MM, HH:MM] — установить время для конкретного завода\n"
+        "Лимиты периода\n"
+        "/limit_graph [минуты] — максимум периода для /get_graph (по умолчанию 2880)\n"
+        "/limit_raw [минуты] — максимум периода для /get_raw (по умолчанию 30)\n\n"
+        "/interval_m [минуты] — установить глобальный интервал\n"
+        "/interval_m <Factory_...> [минуты] — установить интервал для конкретного завода\n"
+        "/interval_m <Factory_...> global — сбросить локальный интервал (использовать глобальный)\n"
+        "/reset_schedule <Factory_...> — удалить локальные настройки расписания завода\n\n"
+        "Расписание сырых данных (raw)\n"
+        "/raw_enable <Factory_...> — включить отправку сырых данных\n"
+        "/raw_disable <Factory_...> — выключить отправку сырых данных\n"
+        "/raw_mode [режим] — установить глобальный raw-режим (once/daily/interval)\n"
+        "/raw_mode <Factory_...> <режим> — установить raw-режим для завода\n"
+        "/raw_daily [HH:MM, HH:MM] — установить глобальное raw-время\n"
+        "/raw_daily <Factory_...> [HH:MM, HH:MM] — установить raw-время для завода\n"
+        "/raw_interval [минуты] — установить глобальный raw-интервал\n"
+        "/raw_interval <Factory_...> [минуты] — установить raw-интервал для завода\n"
+        "/raw_interval <Factory_...> global — сбросить локальный raw-интервал\n\n"
+        "Получение данных вручную\n"
+        "/get_graph <минуты> [ГГГГ.ММ.ДД-ЧЧ:ММ] [Factory_...] — построить график и прислать CSV за период\n"
+        "/get_raw <минуты> [ГГГГ.ММ.ДД-ЧЧ:ММ] [Factory_...] — прислать сырые данные (CSV) за период\n"
+        "Примеры:\n"
+        "  /get_graph 720\n"
+        "  /get_graph 720 2026.10.14-14:00\n"
+        "  /get_graph 720 2026.10.14-14:00 Factory_Ozerniy\n"
+        "  /get_raw 60\n"
+        "  /get_raw 60 2026.10.14-12:25 Factory_Ozerniy\n\n"
+        "Пользователи\n"
+        "/add_user <ID> — добавить пользователя в список разрешённых"
     )
     await message.answer(text)
+
+@dp.message(Command("raw_mode"))
+async def cmd_raw_mode(message: types.Message):
+    if not is_user_allowed(message.from_user.id):
+        return
+
+    parts = message.text.split(maxsplit=2)
+
+    # /raw_mode
+    if len(parts) == 1:
+        await message.reply("❌ Укажите режим: once, daily или interval")
+        return
+
+    # /raw_mode <режим> — глобально
+    if len(parts) == 2:
+        mode = parts[1].strip().lower()
+        if mode not in ('daily', 'interval', 'once'):
+            await message.reply("❌ Доступные режимы: once, daily, interval")
+            return
+        config = read_config()
+        if 'Schedule_Raw' not in config:
+            config['Schedule_Raw'] = {}
+        config['Schedule_Raw']['mode'] = mode
+        save_config(config)
+        await message.reply(f"✅ Глобальный raw-режим изменён на {mode}")
+        return
+
+    # /raw_mode <Factory_...> <режим>
+    if len(parts) == 3:
+        subplot = parts[1].strip()
+        mode = parts[2].strip().lower()
+        if mode not in ('daily', 'interval', 'once'):
+            await message.reply("❌ Доступные режимы: once, daily, interval")
+            return
+        config = read_config()
+        if not config.has_section(subplot) or not subplot.startswith('Factory_'):
+            await message.reply(f"❌ Секция {subplot} не найдена.")
+            return
+        config.set(subplot, 'raw_mode', mode)
+        save_config(config)
+        await message.reply(f"✅ Raw-режим для {subplot} изменён на {mode}")
+
+@dp.message(Command("raw_enable"))
+async def cmd_raw_enable(message: types.Message):
+    if not is_user_allowed(message.from_user.id):
+        return
+    parts = message.text.split(maxsplit=1)
+    if len(parts) < 2:
+        await message.reply("❌ Укажите завод: /raw_enable Factory_Ozerniy")
+        return
+    subplot = parts[1].strip()
+    config = read_config()
+    if not config.has_section(subplot) or not subplot.startswith('Factory_'):
+        await message.reply(f"❌ Секция {subplot} не найдена.")
+        return
+    config.set(subplot, 'raw_enabled', 'true')
+    save_config(config)
+    await message.reply(f"✅ Сырые данные для {subplot} включены.")
+
+@dp.message(Command("raw_daily"))
+async def cmd_raw_daily(message: types.Message):
+    if not is_user_allowed(message.from_user.id):
+        return
+
+    parts = message.text.split(maxsplit=1)
+    if len(parts) < 2:
+        await message.reply(
+            "❌ Укажите время, например:\n"
+            "/raw_daily 9:00\n"
+            "/raw_daily 9:00, 18:00\n"
+            "/raw_daily Factory_Ozerniy 9:00, 18:00"
+        )
+        return
+
+    args = parts[1].strip()
+    tokens = args.split(maxsplit=1)
+    if len(tokens) == 2 and tokens[0].startswith('Factory_'):
+        subplot = tokens[0]
+        time_str = tokens[1]
+    else:
+        subplot = None
+        time_str = args
+
+    times = [t.strip() for t in time_str.split(',') if t.strip()]
+    errors = []
+    for t in times:
+        try:
+            datetime.strptime(t, "%H:%M")
+        except ValueError:
+            errors.append(t)
+    if errors:
+        await message.reply(f"❌ Неверный формат времени: {', '.join(errors)}. Используйте HH:MM")
+        return
+
+    time_str_save = ', '.join(times)
+    config = read_config()
+
+    if subplot is None:
+        if 'Schedule_Raw' not in config:
+            config['Schedule_Raw'] = {}
+        config['Schedule_Raw']['time'] = time_str_save
+        save_config(config)
+        await message.reply(f"✅ Глобальное raw-время обновлено: {time_str_save}")
+    else:
+        if not config.has_section(subplot) or not subplot.startswith('Factory_'):
+            await message.reply(f"❌ Секция {subplot} не найдена.")
+            return
+        config.set(subplot, 'raw_time', time_str_save)
+        if not config.has_option(subplot, 'raw_mode'):
+            config.set(subplot, 'raw_mode', 'daily')
+        save_config(config)
+        await message.reply(f"✅ Raw-время для {subplot} обновлено: {time_str_save}")
+
+@dp.message(Command("raw_interval"))
+async def cmd_raw_interval(message: types.Message):
+    if not is_user_allowed(message.from_user.id):
+        return
+
+    parts = message.text.split(maxsplit=1)
+    if len(parts) < 2:
+        await message.reply(
+            "❌ Укажите минуты, например:\n"
+            "/raw_interval 240\n"
+            "/raw_interval Factory_Ozerniy 120\n"
+            "/raw_interval Factory_Ozerniy global"
+        )
+        return
+
+    args = parts[1].strip()
+    tokens = args.split(maxsplit=1)
+    if len(tokens) == 2 and tokens[0].startswith('Factory_'):
+        subplot = tokens[0]
+        param = tokens[1].strip()
+    else:
+        subplot = None
+        param = tokens[0].strip()
+
+    # Сброс локального интервала
+    if param.lower() == 'global':
+        if subplot is None:
+            await message.reply("❌ 'global' применимо только с указанием завода.")
+            return
+        config = read_config()
+        if not config.has_section(subplot) or not subplot.startswith('Factory_'):
+            await message.reply(f"❌ Секция {subplot} не найдена.")
+            return
+        if config.has_option(subplot, 'raw_interval_minutes'):
+            config.remove_option(subplot, 'raw_interval_minutes')
+            save_config(config)
+            await message.reply(f"✅ Локальный raw-интервал для {subplot} удалён, используется глобальный.")
+        else:
+            await message.reply(f"ℹ️ В {subplot} не было локального raw-интервала.")
+        return
+
+    try:
+        minutes = int(param)
+        if minutes <= 0:
+            raise ValueError
+    except ValueError:
+        await message.reply("❌ Введите положительное целое число минут.")
+        return
+
+    config = read_config()
+    if subplot is None:
+        if 'Schedule_Raw' not in config:
+            config['Schedule_Raw'] = {}
+        config['Schedule_Raw']['interval_minutes'] = str(minutes)
+        save_config(config)
+        await message.reply(f"✅ Глобальный raw-интервал обновлён на {minutes} минут")
+    else:
+        if not config.has_section(subplot) or not subplot.startswith('Factory_'):
+            await message.reply(f"❌ Секция {subplot} не найдена.")
+            return
+        config.set(subplot, 'raw_interval_minutes', str(minutes))
+        if not config.has_option(subplot, 'raw_mode'):
+            config.set(subplot, 'raw_mode', 'interval')
+        save_config(config)
+        await message.reply(f"✅ Raw-интервал для {subplot} обновлён на {minutes} минут")
+
+@dp.message(Command("raw_disable"))
+async def cmd_raw_disable(message: types.Message):
+    if not is_user_allowed(message.from_user.id):
+        return
+    parts = message.text.split(maxsplit=1)
+    if len(parts) < 2:
+        await message.reply("❌ Укажите завод: /raw_disable Factory_Ozerniy")
+        return
+    subplot = parts[1].strip()
+    config = read_config()
+    if not config.has_section(subplot) or not subplot.startswith('Factory_'):
+        await message.reply(f"❌ Секция {subplot} не найдена.")
+        return
+    config.set(subplot, 'raw_enabled', 'false')
+    save_config(config)
+    await message.reply(f"✅ Сырые данные для {subplot} выключены.")
 
 @dp.message(Command("list_subplots"))
 async def cmd_list_subplots(message: types.Message):
@@ -136,39 +359,93 @@ async def cmd_info(message: types.Message):
         return
 
     config = read_config()
-    # Глобальные настройки
+
+    # --- Глобальные настройки графиков ---
     global_mode = config.get('Schedule', 'mode', fallback='не указан')
     global_time = config.get('Schedule', 'time', fallback='не указано')
     global_interval = config.get('Schedule', 'interval_minutes', fallback='не указан')
 
-    text = "📋 Глобальные настройки расписания:\n"
+    text = "📋 Глобальные настройки графиков [Schedule]:\n"
     text += f"  Режим: {global_mode}\n"
     text += f"  Время: {global_time}\n"
     text += f"  Интервал: {global_interval} мин\n\n"
 
+    # --- Глобальные настройки сырых данных ---
+    raw_global_mode = config.get('Schedule_Raw', 'mode', fallback='не указан')
+    raw_global_time = config.get('Schedule_Raw', 'time', fallback='не указано')
+    raw_global_interval = config.get('Schedule_Raw', 'interval_minutes', fallback='не указан')
+
+    text += "📋 Глобальные настройки сырых данных [Schedule_Raw]:\n"
+    text += f"  Режим: {raw_global_mode}\n"
+    text += f"  Время: {raw_global_time}\n"
+    text += f"  Интервал: {raw_global_interval} мин\n\n"
+
+    # --- Настройки заводов ---
     subplots = [s for s in config.sections() if s.startswith('Factory_')]
     if subplots:
         text += "📋 Настройки заводов:\n"
         for sub in subplots:
             params = dict(config.items(sub))
-            # Определяем, какие параметры переопределены локально
+
+            # --- графики ---
             mode = params.get('mode')
             time_val = params.get('time')
             interval = params.get('interval_minutes')
-            # Если локально не задано, пишем "(глобально)"
+
             mode_str = mode if mode else "(глобально)"
             time_str = time_val if time_val else "(глобально)"
             interval_str = interval if interval else "(глобально)"
-            text += f"{sub}:\n"
-            text += f"  Режим: {mode_str}\n"
+
+            text += f"\n{sub}:\n"
+            text += "  ▸ Графики:\n"
+            text += f"      Режим: {mode_str}\n"
             if mode_str == 'daily':
-                text += f"  Время: {time_str}\n"
+                text += f"      Время: {time_str}\n"
             elif mode_str == 'interval':
-                text += f"  Интервал: {interval_str} мин\n"
+                text += f"      Интервал: {interval_str} мин\n"
             elif mode_str == 'once':
-                text += "  (один раз)\n"
+                text += "      (один раз)\n"
             else:
-                text += f"  Время: {time_str} / Интервал: {interval_str} мин\n"
+                text += f"      Время: {time_str} / Интервал: {interval_str} мин\n"
+
+            # --- сырые данные ---
+            raw_enabled = (params.get('raw_enabled') or 'false').lower()
+            raw_on = raw_enabled in ('1', 'true', 'yes', 'on')
+
+            raw_mode = params.get('raw_mode')
+            raw_time_val = params.get('raw_time')
+            raw_interval = params.get('raw_interval_minutes')
+            raw_from = params.get('raw_from_minutes')
+            raw_to = params.get('raw_to_minutes')
+            raw_fields = params.get('raw_fields')
+
+            raw_mode_str = raw_mode if raw_mode else "(глобально)"
+            raw_time_str = raw_time_val if raw_time_val else "(глобально)"
+            raw_interval_str = raw_interval if raw_interval else "(глобально)"
+
+            text += f"  ▸ Сырые данные: {'включены' if raw_on else 'выключены'}\n"
+            if raw_on:
+                text += f"      Режим: {raw_mode_str}\n"
+                if raw_mode_str == 'daily':
+                    text += f"      Время: {raw_time_str}\n"
+                elif raw_mode_str == 'interval':
+                    text += f"      Интервал: {raw_interval_str} мин\n"
+                elif raw_mode_str == 'once':
+                    text += "      (один раз)\n"
+                else:
+                    text += f"      Время: {raw_time_str} / Интервал: {raw_interval_str} мин\n"
+
+                text += f"      Период: от {raw_from or '-60'} до {raw_to or '0'} мин\n"
+                if raw_fields:
+                    # Если полей много, обрежем для читаемости
+                    fields_list = [f.strip() for f in raw_fields.split(',') if f.strip()]
+                    if len(fields_list) > 6:
+                        fields_preview = ", ".join(fields_list[:6]) + f", ... (+{len(fields_list) - 6})"
+                    else:
+                        fields_preview = ", ".join(fields_list)
+                    text += f"      Поля: {fields_preview}\n"
+                else:
+                    text += "      Поля: (по умолчанию)\n"
     else:
         text += "❌ Секции Factory_ не найдены."
 
@@ -263,6 +540,63 @@ async def cmd_daily(message: types.Message):
         save_config(config)
         await message.reply(f"✅ Время для {subplot} обновлено: {time_str_save}")
 
+@dp.message(Command("limit_graph"))
+async def cmd_limit_graph(message: types.Message):
+    if not is_user_allowed(message.from_user.id):
+        return
+    parts = message.text.split(maxsplit=1)
+    if len(parts) < 2:
+        await message.reply(
+            "❌ Укажите максимум в минутах, например:\n"
+            "/limit_graph 2880"
+        )
+        return
+    try:
+        value = int(parts[1].strip())
+        if value <= 0:
+            raise ValueError
+    except ValueError:
+        await message.reply("❌ Введите положительное целое число минут.")
+        return
+
+    config = read_config()
+    if 'Limits' not in config:
+        config['Limits'] = {}
+    config['Limits']['max_graph_minutes'] = str(value)
+    save_config(config)
+    await message.reply(
+        f"✅ Максимум для графиков: {value} мин ({value / 60:.1f} ч)."
+    )
+
+
+@dp.message(Command("limit_raw"))
+async def cmd_limit_raw(message: types.Message):
+    if not is_user_allowed(message.from_user.id):
+        return
+    parts = message.text.split(maxsplit=1)
+    if len(parts) < 2:
+        await message.reply(
+            "❌ Укажите максимум в минутах, например:\n"
+            "/limit_raw 30"
+        )
+        return
+    try:
+        value = int(parts[1].strip())
+        if value <= 0:
+            raise ValueError
+    except ValueError:
+        await message.reply("❌ Введите положительное целое число минут.")
+        return
+
+    config = read_config()
+    if 'Limits' not in config:
+        config['Limits'] = {}
+    config['Limits']['max_raw_minutes'] = str(value)
+    save_config(config)
+    await message.reply(f"✅ Максимум для сырых данных: {value} мин.")
+
+from core.raw_plotter import RawPlotConfig
+
 @dp.message(F.text.regexp(r'^/get_raw(@\w+)?( .+)?$'))
 async def cmd_get_raw(message: types.Message):
     if not is_user_allowed(message.from_user.id):
@@ -271,11 +605,21 @@ async def cmd_get_raw(message: types.Message):
     minutes, right_dt, factory_name = parse_graph_args(message.text)
     if minutes is None:
         await message.reply(
-            "❌ Используйте: /get_raw <минуты> [дата ГГГГ.ММ.ДД-ЧЧ:ММ] [завод]\n"
+            "❌ Используйте: /get_raw <минуты> [ГГГГ.ММ.ДД-ЧЧ:ММ] [завод]\n"
             "Примеры:\n"
-            "/get_raw 60\n"
-            "/get_raw 60 2026.10.14-12:25\n"
-            "/get_raw 60 2026.10.14-12:25 Factory_Ozerniy"
+            "/get_raw 10\n"
+            "/get_raw 10 2026.10.14-12:25\n"
+            "/get_raw 10 2026.10.14-12:25 Factory_Ozerniy"
+        )
+        return
+
+    # --- лимит ---
+    config = read_config()
+    max_minutes = get_limit(config, 'max_raw_minutes', 30)
+    if minutes > max_minutes:
+        await message.reply(
+            f"❌ Слишком большой период: {minutes} мин.\n"
+            f"Максимум для сырых данных — {max_minutes} мин."
         )
         return
 
@@ -288,7 +632,18 @@ async def cmd_get_raw(message: types.Message):
     from_dt = right_dt - timedelta(minutes=minutes)
     time_range_str = f"{from_dt:%Y-%m-%d %H:%M} – {right_dt:%Y-%m-%d %H:%M}"
 
-    config = read_config()
+    # --- глобальные raw_fields и субплоты ---
+    raw_plotter = RawPlotConfig('config.ini')
+    try:
+        raw_fields = raw_plotter.get_raw_fields()
+    except Exception as e:
+        await message.reply(f"❌ Ошибка конфига [RawPlots]: {e}")
+        return
+
+    if not raw_fields:
+        await message.reply("❌ В [RawPlots] не задан raw_fields.")
+        return
+
     all_sections = [s for s in config.sections() if s.startswith('Factory_')]
     if not all_sections:
         await message.reply("❌ В конфиге нет секций Factory_.")
@@ -306,9 +661,6 @@ async def cmd_get_raw(message: types.Message):
         params = dict(config.items(section))
         name = params.get('msg', section)
 
-        raw_fields_str = params.get('raw_fields', '')
-        raw_fields = [f.strip() for f in raw_fields_str.split(',') if f.strip()] or None
-
         try:
             parser = Parser(
                 mill_uuid=params.get('milluuid'),
@@ -320,21 +672,41 @@ async def cmd_get_raw(message: types.Message):
             )
             parser.set_custom_time_range(from_dt, right_dt)
 
+            if not parser.ping():
+                await message.reply(f"⚠️ Мельница {name} сейчас недоступна.")
+                continue
+
             await message.reply(f"⏳ Скачиваю сырые данные для {name}...")
 
-            # скачивание в отдельном потоке, чтобы не блокировать event loop
             df = await asyncio.to_thread(parser.fetch_raw_data)
 
             if df.empty:
                 await message.reply(f"⚠️ Сырые данные для {name} за {time_range_str} пусты.")
                 continue
 
+            # --- график ---
+            saved_path = None
+            try:
+                saved_path = await asyncio.to_thread(
+                    raw_plotter.build_raw_plot, df, section
+                )
+            except Exception as e:
+                log_error(f"Ошибка построения raw-графика для {section}: {e}")
+                await message.reply(f"⚠️ График для {name} не построен: {e}")
+
+            if saved_path:
+                await message.answer_photo(
+                    FSInputFile(saved_path),
+                    caption=f"RAW [{time_range_str}] {name}",
+                )
+
+            # --- CSV ---
             csv_bytes = parser.get_raw_data_csv_bytes()
             csv_name = parser.get_raw_data_csv_filename()
 
             await message.answer_document(
                 BufferedInputFile(csv_bytes, filename=f"{section}__{csv_name}"),
-                caption=f"RAW [{time_range_str}] {name}",
+                caption=f"CSV RAW [{time_range_str}] {name}",
             )
         except Exception as e:
             log_error(f"Ошибка raw для {section}: {e}")
@@ -482,6 +854,15 @@ async def cmd_get_graph(message: types.Message):
     await message.reply(f"⏳ Строю графики за период: {time_range_str}")
 
     config = read_config()
+    max_minutes = get_limit(config, 'max_graph_minutes', 2880)
+
+    if minutes > max_minutes:
+        await message.reply(
+            f"❌ Слишком большой период: {minutes} мин.\n"
+            f"Максимум для графиков — {max_minutes} мин "
+            f"({max_minutes / 60:.1f} ч)."
+        )
+        return
 
     # Получаем список всех секций заводов
     all_sections = [s for s in config.sections() if s.startswith('Factory_')]

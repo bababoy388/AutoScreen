@@ -2,7 +2,10 @@
 Процесс отправки сырых данных.
 Запускается как отдельный процесс из main.py.
 Полностью самодостаточен: сам читает config.ini, сам считает расписание,
-сам качает и отправляет файлы. Логику графика не использует.
+сам качает, строит график и отправляет файлы.
+
+График строится по глобальной секции [RawPlots].
+Интервал/расписание и период — по каждому заводу (raw_* в Factory_*).
 """
 import configparser
 import time
@@ -11,6 +14,7 @@ from datetime import datetime
 from core.parser import Parser
 from core.telegram_sender import TelegramSender
 from core.tools import log_error
+from core.raw_plotter import RawPlotConfig
 
 
 CONFIG_PATH = 'config.ini'
@@ -18,19 +22,17 @@ WAIT_ON_ERROR = 60
 CHECK_INTERVAL = 5
 
 
+# ----------------------------------------------------------------------
+# Вспомогательные функции
+# ----------------------------------------------------------------------
+
 def _is_raw_enabled(params):
     val = (params.get('raw_enabled') or 'false').lower()
     return val in ('1', 'true', 'yes', 'on')
 
 
-def _parse_raw_fields(params):
-    raw_fields_str = params.get('raw_fields', '')
-    fields = [f.strip() for f in raw_fields_str.split(',') if f.strip()]
-    return fields or None
-
-
 def _get_schedule(params, global_cfg):
-    """raw_mode/raw_time/raw_interval_minutes или глобальные значения."""
+    """raw_mode/raw_time/raw_interval_minutes или глобальные значения [Schedule_Raw]."""
     mode = params.get('raw_mode') or global_cfg.get('mode', 'once')
     time_str = params.get('raw_time') or global_cfg.get('time', '')
     interval_min = int(
@@ -40,7 +42,15 @@ def _get_schedule(params, global_cfg):
     return mode, time_str, interval_min
 
 
-def _send_raw(section, config, sender, now):
+# ----------------------------------------------------------------------
+# Отправка одного завода
+# ----------------------------------------------------------------------
+
+def _send_raw(section, config, sender, now, raw_plotter, raw_fields):
+    """
+    Скачивает сырые данные по секции, строит график, шлёт фото + CSV.
+    raw_plotter и raw_fields — глобальные, читаются один раз в raw_process_main.
+    """
     params = dict(config.items(section))
     name = params.get('msg', section)
 
@@ -49,13 +59,13 @@ def _send_raw(section, config, sender, now):
             mill_uuid=params.get('milluuid'),
             host=params.get('host'),
             port=params.get('port'),
-            from_minutes=int(params.get('raw_from_minutes', '-60')),
+            from_minutes=int(params.get('raw_from_minutes', '-10')),
             to_minutes=int(params.get('raw_to_minutes', '0')),
-            raw_fields=_parse_raw_fields(params),
+            raw_fields=raw_fields,
         )
 
         if not parser.ping():
-            sender.send_message(f"Мельница {name} недоступна (raw)")
+            sender.send_message(f"⚠️ Мельница {name} сейчас недоступна (raw)")
             return
 
         df = parser.fetch_raw_data()
@@ -68,29 +78,46 @@ def _send_raw(section, config, sender, now):
             sender.send_message(f"Сырые данные для {name} за {time_range} пусты")
             return
 
+        # --- график ---
+        saved_path = None
+        try:
+            saved_path = raw_plotter.build_raw_plot(df, section)
+        except Exception as e:
+            log_error(f"Ошибка построения raw-графика для {section}: {e}")
+
+        if saved_path:
+            sender.send_photo(saved_path, caption=f"RAW {time_range} {name}")
+
+        # --- CSV ---
         csv_bytes = parser.get_raw_data_csv_bytes()
         csv_name = parser.get_raw_data_csv_filename()
 
         sender.send_document_bytes(
             csv_bytes,
             filename=f"{section}__{csv_name}",
-            caption=f"RAW {time_range} {name}",
+            caption=f"CSV RAW {time_range} {name}",
         )
     except Exception as e:
         log_error(f"Ошибка в _send_raw для {section}: {e}")
         raise
 
 
+# ----------------------------------------------------------------------
+# Обработка расписания одной секции
+# ----------------------------------------------------------------------
+
 def _process_section(section, mode, time_str, interval_min,
                      last_sent, now, today, now_time,
-                     config, sender):
-    """Своя копия логики расписания (дублирует worker_loop графика)."""
+                     config, sender, raw_plotter, raw_fields):
     display_name = dict(config.items(section)).get('msg', section) + " (raw)"
+
+    def send():
+        _send_raw(section, config, sender, now, raw_plotter, raw_fields)
 
     if mode == 'once':
         if section not in last_sent or last_sent[section].get('type') != 'once':
             try:
-                _send_raw(section, config, sender, now)
+                send()
                 last_sent[section] = {'type': 'once', 'sent': True}
             except Exception as e:
                 log_error(f"Ошибка отправки {display_name} (once): {e}")
@@ -100,7 +127,7 @@ def _process_section(section, mode, time_str, interval_min,
         last_entry = last_sent.get(section)
         if last_entry is None or last_entry.get('type') != 'interval':
             try:
-                _send_raw(section, config, sender, now)
+                send()
                 last_sent[section] = {'type': 'interval', 'last_time': now}
             except Exception as e:
                 log_error(f"Ошибка отправки {display_name} (interval, first): {e}")
@@ -108,7 +135,7 @@ def _process_section(section, mode, time_str, interval_min,
             elapsed = (now - last_entry['last_time']).total_seconds()
             if elapsed >= interval_min * 60:
                 try:
-                    _send_raw(section, config, sender, now)
+                    send()
                     last_sent[section]['last_time'] = now
                 except Exception as e:
                     log_error(f"Ошибка отправки {display_name} (interval): {e}")
@@ -142,7 +169,7 @@ def _process_section(section, mode, time_str, interval_min,
                 continue
             if current.hour == t.hour and current.minute == t.minute:
                 try:
-                    _send_raw(section, config, sender, now)
+                    send()
                     sent_times.add(time_key)
                     break
                 except Exception as e:
@@ -150,8 +177,12 @@ def _process_section(section, mode, time_str, interval_min,
         return
 
 
+# ----------------------------------------------------------------------
+# Точка входа процесса
+# ----------------------------------------------------------------------
+
 def raw_process_main():
-    """Точка входа процесса. Свой независимый цикл."""
+    """Свой независимый цикл. Работает в отдельном процессе."""
     last_sent = {}
 
     while True:
@@ -170,6 +201,21 @@ def raw_process_main():
             token = config.get('Telegram', 'token')
             chat_id = config.get('Telegram', 'chat_id')
             sender = TelegramSender(token, chat_id)
+
+            # --- глобальные raw-настройки из [RawPlots] ---
+            try:
+                raw_plotter = RawPlotConfig(CONFIG_PATH)
+                raw_fields = raw_plotter.get_raw_fields()
+            except Exception as e:
+                log_error(f"Ошибка чтения [RawPlots]: {e}")
+                time.sleep(WAIT_ON_ERROR)
+                continue
+
+            if not raw_fields:
+                log_error("В [RawPlots] пустой raw_fields")
+                time.sleep(WAIT_ON_ERROR)
+                continue
+            # -----------------------------------------------
 
             factory_sections = [s for s in config.sections() if s.startswith('Factory_')]
             if not factory_sections:
@@ -198,6 +244,8 @@ def raw_process_main():
                     now_time=now_time,
                     config=config,
                     sender=sender,
+                    raw_plotter=raw_plotter,
+                    raw_fields=raw_fields,
                 )
 
             time.sleep(CHECK_INTERVAL)
