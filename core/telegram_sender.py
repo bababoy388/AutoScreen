@@ -34,5 +34,5 @@ class TelegramSender:
         data = {'chat_id': self.chat_id}
         if caption:
             data['caption'] = caption
-        resp = requests.post(url, data=data, files=files, timeout=60)
+        resp = requests.post(url, data=data, files=files, timeout=600)
         resp.raise_for_status()

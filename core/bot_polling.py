@@ -264,6 +264,83 @@ async def cmd_daily(message: types.Message):
         save_config(config)
         await message.reply(f"✅ Время для {subplot} обновлено: {time_str_save}")
 
+@dp.message(F.text.regexp(r'^/get_raw(@\w+)?( .+)?$'))
+async def cmd_get_raw(message: types.Message):
+    if not is_user_allowed(message.from_user.id):
+        return
+
+    minutes, right_dt, factory_name = parse_graph_args(message.text)
+    if minutes is None:
+        await message.reply(
+            "❌ Используйте: /get_raw <минуты> [дата ГГГГ.ММ.ДД-ЧЧ:ММ] [завод]\n"
+            "Примеры:\n"
+            "/get_raw 60\n"
+            "/get_raw 60 2026.10.14-12:25\n"
+            "/get_raw 60 2026.10.14-12:25 Factory_Ozerniy"
+        )
+        return
+
+    if right_dt is None:
+        right_dt = datetime.now().astimezone()
+    elif right_dt > datetime.now().astimezone():
+        await message.reply("❌ Указанная дата в будущем.")
+        return
+
+    from_dt = right_dt - timedelta(minutes=minutes)
+    time_range_str = f"{from_dt:%Y-%m-%d %H:%M} – {right_dt:%Y-%m-%d %H:%M}"
+
+    config = read_config()
+    all_sections = [s for s in config.sections() if s.startswith('Factory_')]
+    if not all_sections:
+        await message.reply("❌ В конфиге нет секций Factory_.")
+        return
+
+    if factory_name:
+        if not config.has_section(factory_name):
+            await message.reply(f"❌ Завод '{factory_name}' не найден.")
+            return
+        sections_to_process = [factory_name]
+    else:
+        sections_to_process = all_sections
+
+    for section in sections_to_process:
+        params = dict(config.items(section))
+        name = params.get('msg', section)
+
+        raw_fields_str = params.get('raw_fields', '')
+        raw_fields = [f.strip() for f in raw_fields_str.split(',') if f.strip()] or None
+
+        try:
+            parser = Parser(
+                mill_uuid=params.get('milluuid'),
+                host=params.get('host'),
+                port=params.get('port'),
+                from_minutes=0,
+                to_minutes=0,
+                raw_fields=raw_fields,
+            )
+            parser.set_custom_time_range(from_dt, right_dt)
+
+            await message.reply(f"⏳ Скачиваю сырые данные для {name}...")
+
+            # скачивание в отдельном потоке, чтобы не блокировать event loop
+            df = await asyncio.to_thread(parser.fetch_raw_data)
+
+            if df.empty:
+                await message.reply(f"⚠️ Сырые данные для {name} за {time_range_str} пусты.")
+                continue
+
+            csv_bytes = parser.get_raw_data_csv_bytes()
+            csv_name = parser.get_raw_data_csv_filename()
+
+            await message.answer_document(
+                BufferedInputFile(csv_bytes, filename=f"{section}__{csv_name}"),
+                caption=f"RAW [{time_range_str}] {name}",
+            )
+        except Exception as e:
+            log_error(f"Ошибка raw для {section}: {e}")
+            await message.reply(f"❌ Ошибка raw для {section}: {e}")
+
 @dp.message(Command("interval_m"))
 async def cmd_interval_m(message: types.Message):
     if not is_user_allowed(message.from_user.id):
