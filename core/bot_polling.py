@@ -37,7 +37,8 @@ def is_user_allowed(user_id):
     return user_id in allowed_ids
 
 def parse_graph_args(text):
-    clean = re.sub(r'^/get_graph(@\w+)?', '', text).strip()
+    # срезаем /любую_команду и опциональный @botname
+    clean = re.sub(r'^/\w+(?:@\w+)?', '', text).strip()
     parts = clean.split()
     if not parts:
         return None, None, None
@@ -53,9 +54,7 @@ def parse_graph_args(text):
     right_dt = None
     factory_name = None
 
-    # Остальные аргументы (до двух)
     for arg in parts[1:]:
-        # Пробуем распарсить как дату
         try:
             dt = datetime.strptime(arg, '%Y.%m.%d-%H:%M')
             right_dt = dt.astimezone()
@@ -63,11 +62,9 @@ def parse_graph_args(text):
         except ValueError:
             pass
 
-        # Если не дата, проверяем, не начинается ли с Factory_
         if arg.startswith('Factory_'):
             factory_name = arg
         else:
-            # Если аргумент не дата и не завод — ошибка
             return None, None, None
 
     return minutes, right_dt, factory_name
