@@ -890,10 +890,6 @@ async def cmd_get_graph(message: types.Message):
             await message.reply("❌ Указанная дата в будущем. Используйте прошедшее время.")
             return
 
-    from_dt = right_dt - timedelta(minutes=minutes)
-    time_range_str = f"{from_dt.strftime('%Y-%m-%d %H:%M')} – {right_dt.strftime('%Y-%m-%d %H:%M')}"
-    await message.reply(f"⏳ Строю графики за период: {time_range_str}")
-
     config = read_config()
     max_minutes = get_limit(config, 'max_graph_minutes', 2880)
 
@@ -904,6 +900,10 @@ async def cmd_get_graph(message: types.Message):
             f"({max_minutes / 60:.1f} ч)."
         )
         return
+
+    from_dt = right_dt - timedelta(minutes=minutes)
+    time_range_str = f"{from_dt.strftime('%Y-%m-%d %H:%M')} – {right_dt.strftime('%Y-%m-%d %H:%M')}"
+    await message.reply(f"⏳ Строю графики за период: {time_range_str}")
 
     # Получаем список всех секций заводов
     all_sections = [s for s in config.sections() if s.startswith('Factory_')]
