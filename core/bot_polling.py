@@ -4,7 +4,7 @@ import re
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
 from aiogram.client.session.aiohttp import AiohttpSession
-from aiogram.types import FSInputFile
+from aiogram.types import FSInputFile, BufferedInputFile
 from core.parser import Parser
 from core.builder_graph import PlotConfig
 from core.tools import log_error
@@ -423,7 +423,6 @@ async def cmd_get_graph(message: types.Message):
         sections_to_process = all_sections
 
     plotter = PlotConfig('config.ini')
-    sent_count = 0
 
     for section in sections_to_process:
         subplot_params = dict(config.items(section))
@@ -465,7 +464,15 @@ async def cmd_get_graph(message: types.Message):
                 photo = FSInputFile(saved_path)
                 caption = f"[{time_range_str}] {name}"
                 await message.answer_photo(photo, caption=caption)
-                sent_count += 1
+                csv_bytes = parser.get_raw_csv_bytes()  # оригинал, не df.to_csv()
+                csv_name = parser.get_raw_csv_filename()
+
+                safe_name = f"{section}__{csv_name}"
+
+                await message.answer_document(
+                    BufferedInputFile(csv_bytes, filename=safe_name),
+                    caption=f"CSV для {name} за период {time_range_str}"
+                )
         except Exception as e:
             log_error(f"Ошибка при обработке {section}: {e}")
             await message.reply(f"❌ Ошибка при загрузке данных для {section}: {e}")

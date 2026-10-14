@@ -27,3 +27,12 @@ class TelegramSender:
                 resp.raise_for_status()
             except Exception as e:
                 log_error(f"Ошибка отправки фото: {e}")
+
+    def send_document_bytes(self, content: bytes, filename: str, caption: str = None):
+        url = f"https://api.telegram.org/bot{self.token}/sendDocument"
+        files = {'document': (filename, content)}
+        data = {'chat_id': self.chat_id}
+        if caption:
+            data['caption'] = caption
+        resp = requests.post(url, data=data, files=files, timeout=60)
+        resp.raise_for_status()

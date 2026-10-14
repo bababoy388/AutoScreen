@@ -12,8 +12,13 @@ class Parser:
         self.mill_uuid = mill_uuid
         self.host = host
         self.port = port
-        self.from_time, self.to_time, self.from_local, self.to_local = self._compute_time_range(from_minutes,
-                                                                                                to_minutes)
+        self.from_time, self.to_time, self.from_local, self.to_local = \
+            self._compute_time_range(from_minutes, to_minutes)
+
+        self._zip_bytes = None
+        self._csv_bytes = None
+        self._csv_filename = None
+        self._zip_filename = None
 
     def ping(self, timeout=15):
         """Проверяет доступность хоста и порта. Возвращает True, если соединение установлено."""
@@ -71,33 +76,34 @@ class Parser:
             raise
 
     def _download_zip_bytes(self, file_name):
-        # Проверяем, что millUuid не пустой
         if not self.mill_uuid:
             raise ValueError("millUuid не может быть пустым для скачивания файла")
 
         encoded_name = requests.utils.quote(file_name, safe='')
         url = f"http://{self.host}:{self.port}/api/RawData/download"
-        params = {
-            "fileName": encoded_name,
-            "millUuid": self.mill_uuid
-        }
+        params = {"fileName": encoded_name, "millUuid": self.mill_uuid}
         try:
             resp = retry_request(lambda: requests.get(url, params=params, timeout=600))
             resp.raise_for_status()
-            return io.BytesIO(resp.content)
+            self._zip_bytes = io.BytesIO(resp.content)
+            self._zip_bytes.seek(0)
+            self._zip_filename = file_name
+            return self._zip_bytes
         except Exception as e:
             log_error(f"Ошибка в _download_zip_bytes для файла {file_name}: {e}")
             raise
 
     def _extract_csv_from_zip(self, zip_bytes):
         try:
+            zip_bytes.seek(0)
             with zipfile.ZipFile(zip_bytes) as zf:
-                csv_names = [name for name in zf.namelist()
-                             if name.lower().endswith('.csv')]
+                csv_names = [n for n in zf.namelist() if n.lower().endswith('.csv')]
                 if not csv_names:
                     raise FileNotFoundError("В архиве нет CSV-файла")
-                with zf.open(csv_names[0]) as csv_file:
-                    return pd.read_csv(csv_file)
+                self._csv_filename = csv_names[0]
+                self._csv_bytes = zf.read(self._csv_filename)
+            zip_bytes.seek(0)
+            return pd.read_csv(io.BytesIO(self._csv_bytes))
         except Exception as e:
             log_error(f"Ошибка в _extract_csv_from_zip: {e}")
             raise
@@ -115,3 +121,21 @@ class Parser:
         df = self._extract_csv_from_zip(zip_bytes)
         df = self._prepare_dataframe(df)
         return df
+
+    def get_raw_zip_bytes(self) -> bytes:
+        """Оригинальный ZIP-файл с сервера."""
+        if self._zip_bytes is None:
+            raise RuntimeError("ZIP ещё не скачан. Вызовите get_dataframe().")
+        return self._zip_bytes.getvalue()
+
+    def get_raw_csv_bytes(self) -> bytes:
+        """Оригинальный CSV из ZIP, без пересборки через pandas."""
+        if self._csv_bytes is None:
+            raise RuntimeError("CSV ещё не извлечён. Вызовите get_dataframe().")
+        return self._csv_bytes
+
+    def get_raw_csv_filename(self) -> str:
+        return self._csv_filename or "data.csv"
+
+    def get_raw_zip_filename(self) -> str:
+        return self._zip_filename or "data.zip"

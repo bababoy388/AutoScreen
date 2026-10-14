@@ -2,7 +2,7 @@ import configparser
 import time
 import threading
 import asyncio
-from datetime import datetime, timedelta
+from datetime import datetime
 from core.parser import Parser
 from core.builder_graph import PlotConfig
 from core.telegram_sender import TelegramSender
@@ -25,7 +25,6 @@ def send_subplot(subplot_section, config, sender, plotter, now):
     from_min = int(subplot_params.get('from_minutes', '-720'))
     to_min = int(subplot_params.get('to_minutes', '0'))
     name = subplot_params.get('msg')
-
 
     try:
         parser = Parser(
@@ -58,6 +57,21 @@ def send_subplot(subplot_section, config, sender, plotter, now):
             caption = subplot_params.get('msg', subplot_section)
             msg = f"{time_range} {caption}"
             sender.send_photo(saved_path, caption=msg)
+
+            try:
+                csv_bytes = parser.get_raw_csv_bytes()
+                csv_name = parser.get_raw_csv_filename()
+                safe_name = f"{subplot_section}__{csv_name}"
+
+                sender.send_document_bytes(
+                    csv_bytes,
+                    filename=safe_name,
+                    caption=f"CSV {time_range} {caption}"
+                )
+            except Exception as e:
+                log_error(f"Ошибка отправки CSV для {subplot_section}: {e}")
+                # Не пробрасываем дальше — график уже отправлен
+
     except Exception as e:
         log_error(f"Ошибка в send_subplot для {subplot_section}: {e}")
         raise
@@ -174,7 +188,7 @@ def worker_loop():
 def main():
     worker_thread = threading.Thread(target=worker_loop, daemon=True)
     worker_thread.start()
-    print("✅ Рабочий цикл запущен в фоновом потоке")
+    print("Рабочий цикл запущен в фоновом потоке")
 
     try:
         asyncio.run(dp.start_polling(bot, handle_signals=False))
