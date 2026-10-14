@@ -108,6 +108,7 @@ async def cmd_help(message: types.Message):
         "Расписание графиков\n"
         "/mode [режим] — установить глобальный режим (once/daily/interval)\n"
         "/mode <Factory_...> <режим> — установить режим для конкретного завода\n"
+        "/raw_period <Factory_...> <от> <до> — задать период в минутах (например, -30 0)\n"
         "/daily [HH:MM, HH:MM] — установить глобальное время отправки\n"
         "/daily <Factory_...> [HH:MM, HH:MM] — установить время для конкретного завода\n"
         "Лимиты периода\n"
@@ -711,6 +712,46 @@ async def cmd_get_raw(message: types.Message):
         except Exception as e:
             log_error(f"Ошибка raw для {section}: {e}")
             await message.reply(f"❌ Ошибка raw для {section}: {e}")
+
+@dp.message(Command("raw_period"))
+async def cmd_raw_period(message: types.Message):
+    if not is_user_allowed(message.from_user.id):
+        return
+
+    parts = message.text.split(maxsplit=3)
+    if len(parts) < 4:
+        await message.reply(
+            "❌ Укажите завод и границы периода в минутах:\n"
+            "/raw_period Factory_Ozerniy -30 0\n"
+            "Отрицательное — назад от текущего момента, 0 — текущий момент."
+        )
+        return
+
+    subplot = parts[1].strip()
+    if not subplot.startswith('Factory_'):
+        await message.reply("❌ Первый аргумент должен быть заводом (Factory_...).")
+        return
+
+    try:
+        from_min = int(parts[2])
+        to_min = int(parts[3])
+    except ValueError:
+        await message.reply("❌ Оба значения должны быть целыми числами.")
+        return
+
+    if from_min >= to_min:
+        await message.reply("❌ 'От' должно быть меньше 'до' (например, -30 и 0).")
+        return
+
+    config = read_config()
+    if not config.has_section(subplot):
+        await message.reply(f"❌ Секция {subplot} не найдена.")
+        return
+
+    config.set(subplot, 'raw_from_minutes', str(from_min))
+    config.set(subplot, 'raw_to_minutes', str(to_min))
+    save_config(config)
+    await message.reply(f"✅ Период для {subplot} обновлён: от {from_min} до {to_min} минут.")
 
 @dp.message(Command("interval_m"))
 async def cmd_interval_m(message: types.Message):
