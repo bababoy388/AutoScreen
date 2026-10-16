@@ -18,7 +18,7 @@ from core.raw_plotter import RawPlotConfig
 
 
 CONFIG_PATH = 'config.ini'
-PLOT_CONFIG_PATH = 'plot_config.json'
+PLOT_CONFIG_PATH = 'core/plot_config.json'
 WAIT_ON_ERROR = 60
 CHECK_INTERVAL = 5
 

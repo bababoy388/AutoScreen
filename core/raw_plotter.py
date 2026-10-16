@@ -8,11 +8,11 @@ import os
 import tempfile
 from pathlib import Path
 
-from plot_csv_columns import load_config, load_plot_data, make_plot
+from core.plot_csv_columns import load_config, load_plot_data, make_plot
 from core.tools import log_error
 
 
-PLOT_CONFIG_PATH = 'plot_config.json'
+PLOT_CONFIG_PATH = 'core/plot_config.json'
 
 
 class RawPlotConfig:
