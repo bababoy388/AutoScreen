@@ -633,17 +633,18 @@ async def cmd_get_raw(message: types.Message):
     from_dt = right_dt - timedelta(minutes=minutes)
     time_range_str = f"{from_dt:%Y-%m-%d %H:%M} – {right_dt:%Y-%m-%d %H:%M}"
 
-    # --- глобальные raw_fields и субплоты ---
-    raw_plotter = RawPlotConfig('config.ini')
+    # --- глобальные raw-настройки из plot_config.json ---
     try:
+        raw_plotter = RawPlotConfig('plot_config.json')
         raw_fields = raw_plotter.get_raw_fields()
     except Exception as e:
-        await message.reply(f"❌ Ошибка конфига [RawPlots]: {e}")
+        await message.reply(f"❌ Ошибка чтения plot_config.json: {e}")
         return
 
     if not raw_fields:
-        await message.reply("❌ В [RawPlots] не задан raw_fields.")
+        await message.reply("❌ В plot_config.json не заданы поля.")
         return
+    # ----------------------------------------------------
 
     all_sections = [s for s in config.sections() if s.startswith('Factory_')]
     if not all_sections:
@@ -679,6 +680,7 @@ async def cmd_get_raw(message: types.Message):
 
             await message.reply(f"⏳ Скачиваю сырые данные для {name}...")
 
+            # скачивание в отдельном потоке — event loop не блокируется
             df = await asyncio.to_thread(parser.fetch_raw_data)
 
             if df.empty:
@@ -701,7 +703,7 @@ async def cmd_get_raw(message: types.Message):
                     caption=f"RAW [{time_range_str}] {name}",
                 )
 
-            # --- CSV ---
+            # --- CSV сырых данных ---
             csv_bytes = parser.get_raw_data_csv_bytes()
             csv_name = parser.get_raw_data_csv_filename()
 

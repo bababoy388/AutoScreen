@@ -1,0 +1,111 @@
+{
+  "x_column": "row_number",
+  "series": [
+    {
+      "column": "v2_7",
+      "label": "2_7",
+      "ratio": 0.05035,
+      "subplot": "frm",
+      "color": "C0"
+    },
+    {
+      "column": "v2_8",
+      "label": "v2_8",
+      "ratio": 0.006747,
+      "subplot": "krs",
+      "color": "C1"
+    },
+    {
+      "column": "v0_3",
+      "label": "ax0_3",
+      "ratio": 0.05035,
+      "subplot": "axel",
+      "color": "C0"
+    },
+    {
+      "column": "v1_2",
+      "label": "ax1_2",
+      "ratio": 0.05035,
+      "subplot": "axel",
+      "color": "C1"
+    },
+    {
+      "column": "v0_2",
+      "label": "ax0_2",
+      "ratio": 0.05035,
+      "subplot": "axel",
+      "color": "C2"
+    },
+    {
+      "column": "v2_1",
+      "label": "tens2_1",
+      "ratio": 0.05035,
+      "subplot": "tens",
+      "color": "C0"
+    },
+    {
+      "column": "v2_2",
+      "label": "tens2_2",
+      "ratio": 0.05035,
+      "subplot": "tens",
+      "color": "C1"
+    },
+    {
+      "column": "v2_3",
+      "label": "tens2_3",
+      "ratio": 0.05035,
+      "subplot": "tens",
+      "color": "C2"
+    }
+  ],
+  "subplots": [
+    {
+      "id": "frm",
+      "title": "sync, mV",
+      "y_axis_mode": "separate",
+      "legend": true,
+      "legend_location": "best",
+      "grid": true
+    },
+    {
+      "id": "krs",
+      "title": "KARAS', V",
+      "y_axis_mode": "separate",
+      "legend": true,
+      "legend_location": "best",
+      "grid": true
+    },
+    {
+      "id": "axel",
+      "title": "axel, mV",
+      "y_axis_mode": "separate",
+      "legend": true,
+      "legend_location": "best",
+      "grid": true
+    },
+    {
+      "id": "tens",
+      "title": "tens, mV",
+      "y_axis_mode": "shared",
+      "legend": true,
+      "legend_location": "best",
+      "grid": true
+    }
+  ],
+  "output_path": "python-plot.png",
+  "save_plot": false,
+  "show_plot": true,
+  "title": "v2_7 and v2_8",
+  "x_label": "Row number",
+  "y_label": "Scaled value",
+  "figsize": [12, 6],
+  "dpi": 150,
+  "max_points": null,
+  "share_x": true,
+  "line_width": 1.0,
+  "alpha": 1.0,
+  "legend_draggable": true,
+  "click_legend_to_toggle": true,
+  "grid": true,
+  "delimiter": "auto"
+}

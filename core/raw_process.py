@@ -2,9 +2,9 @@
 Процесс отправки сырых данных.
 Запускается как отдельный процесс из main.py.
 Полностью самодостаточен: сам читает config.ini, сам считает расписание,
-сам качает, строит график и отправляет файлы.
+сам качает, строит график через plot_csv_columns.py и отправляет файлы.
 
-График строится по глобальной секции [RawPlots].
+График строится по глобальному plot_config.json (один для всех заводов).
 Интервал/расписание и период — по каждому заводу (raw_* в Factory_*).
 """
 import configparser
@@ -18,6 +18,7 @@ from core.raw_plotter import RawPlotConfig
 
 
 CONFIG_PATH = 'config.ini'
+PLOT_CONFIG_PATH = 'plot_config.json'
 WAIT_ON_ERROR = 60
 CHECK_INTERVAL = 5
 
@@ -32,7 +33,7 @@ def _is_raw_enabled(params):
 
 
 def _get_schedule(params, global_cfg):
-    """raw_mode/raw_time/raw_interval_minutes или глобальные значения [Schedule_Raw]."""
+    """raw_mode/raw_time/raw_interval_minutes или глобальные [Schedule_Raw]."""
     mode = params.get('raw_mode') or global_cfg.get('mode', 'once')
     time_str = params.get('raw_time') or global_cfg.get('time', '')
     interval_min = int(
@@ -161,17 +162,16 @@ def _process_section(section, mode, time_str, interval_min,
             last_sent[section] = {'type': 'daily', 'date': today, 'sent_times': set()}
 
         sent_times = last_sent[section]['sent_times']
-        current = now_time.replace(second=0, microsecond=0)
 
         for t in valid_times:
             time_key = t.strftime('%H:%M')
             if time_key in sent_times:
                 continue
-            if current.hour == t.hour and current.minute == t.minute:
+            # "уже наступило" — догоняем слот, даже если цикл задержался
+            if (now_time.hour, now_time.minute) >= (t.hour, t.minute):
                 try:
                     send()
                     sent_times.add(time_key)
-                    break
                 except Exception as e:
                     log_error(f"Ошибка отправки {display_name} в {time_key}: {e}")
         return
@@ -202,20 +202,20 @@ def raw_process_main():
             chat_id = config.get('Telegram', 'chat_id')
             sender = TelegramSender(token, chat_id)
 
-            # --- глобальные raw-настройки из [RawPlots] ---
+            # --- глобальные raw-настройки из plot_config.json ---
             try:
-                raw_plotter = RawPlotConfig(CONFIG_PATH)
+                raw_plotter = RawPlotConfig(PLOT_CONFIG_PATH)
                 raw_fields = raw_plotter.get_raw_fields()
             except Exception as e:
-                log_error(f"Ошибка чтения [RawPlots]: {e}")
+                log_error(f"Ошибка чтения {PLOT_CONFIG_PATH}: {e}")
                 time.sleep(WAIT_ON_ERROR)
                 continue
 
             if not raw_fields:
-                log_error("В [RawPlots] пустой raw_fields")
+                log_error(f"{PLOT_CONFIG_PATH}: пустой список полей")
                 time.sleep(WAIT_ON_ERROR)
                 continue
-            # -----------------------------------------------
+            # ------------------------------------------------------
 
             factory_sections = [s for s in config.sections() if s.startswith('Factory_')]
             if not factory_sections:
