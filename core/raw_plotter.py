@@ -12,12 +12,12 @@ from core.plot_csv_columns import load_config, load_plot_data, make_plot
 from core.tools import log_error
 
 
-PLOT_CONFIG_PATH = 'core/plot_config.json'
-
+PLOT_CONFIG_PATH = str(Path(__file__).resolve().parent / 'plot_config.json')
 
 class RawPlotConfig:
-    def __init__(self, plot_config_path=PLOT_CONFIG_PATH):
-        self.plot_config_path = plot_config_path
+    def __init__(self, plot_config_path=None):
+        # если путь не передан — берём дефолт рядом с файлом
+        self.plot_config_path = str(plot_config_path) if plot_config_path else PLOT_CONFIG_PATH
 
     # ------------------------------------------------------------------
     # Что запрашивать у сервера

@@ -18,7 +18,7 @@ from core.raw_plotter import RawPlotConfig
 
 
 CONFIG_PATH = 'config.ini'
-PLOT_CONFIG_PATH = 'core/plot_config.json'
+PLOT_CONFIG_PATH = 'plot_config.json'
 WAIT_ON_ERROR = 60
 CHECK_INTERVAL = 5
 
@@ -204,7 +204,7 @@ def raw_process_main():
 
             # --- глобальные raw-настройки из plot_config.json ---
             try:
-                raw_plotter = RawPlotConfig(PLOT_CONFIG_PATH)
+                raw_plotter = RawPlotConfig()
                 raw_fields = raw_plotter.get_raw_fields()
             except Exception as e:
                 log_error(f"Ошибка чтения {PLOT_CONFIG_PATH}: {e}")
