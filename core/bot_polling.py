@@ -635,7 +635,7 @@ async def cmd_get_raw(message: types.Message):
 
     # --- глобальные raw-настройки из plot_config.json ---
     try:
-        raw_plotter = RawPlotConfig('plot_config.json')
+        raw_plotter = RawPlotConfig('core/plot_config.json')
         raw_fields = raw_plotter.get_raw_fields()
     except Exception as e:
         await message.reply(f"❌ Ошибка чтения plot_config.json: {e}")
