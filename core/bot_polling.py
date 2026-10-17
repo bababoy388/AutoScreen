@@ -635,14 +635,11 @@ async def cmd_get_raw(message: types.Message):
 
     # --- глобальные raw-настройки из plot_config.json ---
     try:
-        raw_plotter = RawPlotConfig('core/plot_config.json')
-        raw_fields = raw_plotter.get_raw_fields()
+        raw_plotter = RawPlotConfig()
+        # None — значит качать все колонки; список — если сервер требует fields
+        download_fields = raw_plotter.get_download_fields()
     except Exception as e:
         await message.reply(f"❌ Ошибка чтения plot_config.json: {e}")
-        return
-
-    if not raw_fields:
-        await message.reply("❌ В plot_config.json не заданы поля.")
         return
     # ----------------------------------------------------
 
@@ -670,7 +667,7 @@ async def cmd_get_raw(message: types.Message):
                 port=params.get('port'),
                 from_minutes=0,
                 to_minutes=0,
-                raw_fields=raw_fields,
+                raw_fields=download_fields,   # None → все колонки
             )
             parser.set_custom_time_range(from_dt, right_dt)
 
@@ -703,7 +700,7 @@ async def cmd_get_raw(message: types.Message):
                     caption=f"RAW [{time_range_str}] {name}",
                 )
 
-            # --- CSV сырых данных ---
+            # --- CSV сырых данных (полный, со всеми колонками) ---
             csv_bytes = parser.get_raw_data_csv_bytes()
             csv_name = parser.get_raw_data_csv_filename()
 

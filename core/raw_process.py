@@ -18,7 +18,7 @@ from core.raw_plotter import RawPlotConfig
 
 
 CONFIG_PATH = 'config.ini'
-PLOT_CONFIG_PATH = 'plot_config.json'
+PLOT_CONFIG_PATH = 'core/plot_config.json' # или просто 'plot_config.json', зависит от того, как настроен RawPlotConfig
 WAIT_ON_ERROR = 60
 CHECK_INTERVAL = 5
 
@@ -47,10 +47,10 @@ def _get_schedule(params, global_cfg):
 # Отправка одного завода
 # ----------------------------------------------------------------------
 
-def _send_raw(section, config, sender, now, raw_plotter, raw_fields):
+def _send_raw(section, config, sender, now, raw_plotter, download_fields):
     """
     Скачивает сырые данные по секции, строит график, шлёт фото + CSV.
-    raw_plotter и raw_fields — глобальные, читаются один раз в raw_process_main.
+    download_fields — None (качать всё) или список колонок.
     """
     params = dict(config.items(section))
     name = params.get('msg', section)
@@ -62,7 +62,7 @@ def _send_raw(section, config, sender, now, raw_plotter, raw_fields):
             port=params.get('port'),
             from_minutes=int(params.get('raw_from_minutes', '-10')),
             to_minutes=int(params.get('raw_to_minutes', '0')),
-            raw_fields=raw_fields,
+            raw_fields=download_fields,  # None — значит качаем все поля
         )
 
         if not parser.ping():
@@ -82,6 +82,7 @@ def _send_raw(section, config, sender, now, raw_plotter, raw_fields):
         # --- график ---
         saved_path = None
         try:
+            # Внутри build_raw_plot из df возьмутся только те колонки, что в plot_config.json
             saved_path = raw_plotter.build_raw_plot(df, section)
         except Exception as e:
             log_error(f"Ошибка построения raw-графика для {section}: {e}")
@@ -89,7 +90,7 @@ def _send_raw(section, config, sender, now, raw_plotter, raw_fields):
         if saved_path:
             sender.send_photo(saved_path, caption=f"RAW {time_range} {name}")
 
-        # --- CSV ---
+        # --- CSV (отдаём тот же полный df, который скачали) ---
         csv_bytes = parser.get_raw_data_csv_bytes()
         csv_name = parser.get_raw_data_csv_filename()
 
@@ -109,11 +110,11 @@ def _send_raw(section, config, sender, now, raw_plotter, raw_fields):
 
 def _process_section(section, mode, time_str, interval_min,
                      last_sent, now, today, now_time,
-                     config, sender, raw_plotter, raw_fields):
+                     config, sender, raw_plotter, download_fields):
     display_name = dict(config.items(section)).get('msg', section) + " (raw)"
 
     def send():
-        _send_raw(section, config, sender, now, raw_plotter, raw_fields)
+        _send_raw(section, config, sender, now, raw_plotter, download_fields)
 
     if mode == 'once':
         if section not in last_sent or last_sent[section].get('type') != 'once':
@@ -167,7 +168,8 @@ def _process_section(section, mode, time_str, interval_min,
             time_key = t.strftime('%H:%M')
             if time_key in sent_times:
                 continue
-            # "уже наступило" — догоняем слот, даже если цикл задержался
+
+            # Строго в свою минуту — без "догона" при рестарте
             if now_time.hour == t.hour and now_time.minute == t.minute:
                 try:
                     send()
@@ -202,20 +204,16 @@ def raw_process_main():
             chat_id = config.get('Telegram', 'chat_id')
             sender = TelegramSender(token, chat_id)
 
-            # --- глобальные raw-настройки из plot_config.json ---
+            # --- глобальные настройки скачивания из plot_config.json ---
             try:
                 raw_plotter = RawPlotConfig()
-                raw_fields = raw_plotter.get_raw_fields()
+                # get_download_fields() вернёт None (качать всё) или список полей
+                download_fields = raw_plotter.get_download_fields()
             except Exception as e:
-                log_error(f"Ошибка чтения {PLOT_CONFIG_PATH}: {e}")
+                log_error(f"Ошибка чтения plot_config.json: {e}")
                 time.sleep(WAIT_ON_ERROR)
                 continue
-
-            if not raw_fields:
-                log_error(f"{PLOT_CONFIG_PATH}: пустой список полей")
-                time.sleep(WAIT_ON_ERROR)
-                continue
-            # ------------------------------------------------------
+            # ------------------------------------------------------------
 
             factory_sections = [s for s in config.sections() if s.startswith('Factory_')]
             if not factory_sections:
@@ -245,7 +243,7 @@ def raw_process_main():
                     config=config,
                     sender=sender,
                     raw_plotter=raw_plotter,
-                    raw_fields=raw_fields,
+                    download_fields=download_fields,
                 )
 
             time.sleep(CHECK_INTERVAL)

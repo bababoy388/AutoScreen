@@ -1,9 +1,7 @@
 """
 Обёртка над plot_csv_columns.py.
 Единый конфиг графиков — plot_config.json, общий для всех заводов.
-Поля для запроса к серверу берутся из того же конфига (series[].column).
 """
-import json
 import os
 import tempfile
 from pathlib import Path
@@ -14,19 +12,21 @@ from core.tools import log_error
 
 PLOT_CONFIG_PATH = str(Path(__file__).resolve().parent / 'plot_config.json')
 
+
 class RawPlotConfig:
     def __init__(self, plot_config_path=None):
         # если путь не передан — берём дефолт рядом с файлом
         self.plot_config_path = str(plot_config_path) if plot_config_path else PLOT_CONFIG_PATH
 
     # ------------------------------------------------------------------
-    # Что запрашивать у сервера
+    # Что рисовать (для графика)
     # ------------------------------------------------------------------
 
-    def get_raw_fields(self):
+    def get_plot_fields(self):
         """
-        Список колонок для параметра fields в /api/RawData/csv.
-        Собирается из x_column (если не row_number) + series[].column.
+        Колонки, которые нужны для ГРАФИКА (из plot_config.json).
+        Используется только для отладки/логов — build_raw_plot сам
+        разберётся, какие колонки брать.
         """
         cfg = load_config(Path(self.plot_config_path))
         x_col = str(cfg['x_column'])
@@ -43,6 +43,31 @@ class RawPlotConfig:
         return fields
 
     # ------------------------------------------------------------------
+    # Что скачивать (для CSV)
+    # ------------------------------------------------------------------
+
+    def get_download_fields(self):
+        """
+        Колонки для параметра fields в /api/RawData/csv.
+
+        None  -> параметр fields не отправляется, сервер отдаёт ВСЕ колонки.
+        [...] -> отправляется явный список (если сервер требует fields).
+
+        Сейчас возвращаем None, чтобы CSV приходил полный.
+        Если сервер не отдаёт данные без fields — раскомментируй список ниже.
+        """
+        return None
+
+        # Если серверу нужен явный список:
+        # return [
+        #     "time", "FrameCnt", "rotationDuration",
+        #     "ExAccVibX", "ExAccVibY", "Tensor",
+        #     "v0_1", "v0_2", "v0_3",
+        #     "v1_1", "v1_2", "v1_3",
+        #     "v2_1", "v2_2", "v2_3", "v2_4", "v2_5", "v2_6", "v2_7", "v2_8",
+        # ]
+
+    # ------------------------------------------------------------------
     # Построение
     # ------------------------------------------------------------------
 
@@ -50,6 +75,7 @@ class RawPlotConfig:
         """
         Строит график по df, используя plot_config.json.
         df — DataFrame с колонками, совпадающими с series[].column.
+        Лишние колонки в df игнорируются.
 
         section — только для имени PNG, если save_path не задан.
         Возвращает путь к сохранённому PNG.
