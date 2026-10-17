@@ -168,7 +168,7 @@ def _process_section(section, mode, time_str, interval_min,
             if time_key in sent_times:
                 continue
             # "уже наступило" — догоняем слот, даже если цикл задержался
-            if (now_time.hour, now_time.minute) >= (t.hour, t.minute):
+            if now_time.hour == t.hour and now_time.minute == t.minute:
                 try:
                     send()
                     sent_times.add(time_key)

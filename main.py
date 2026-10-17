@@ -172,8 +172,8 @@ def worker_loop():
                         if time_key in sent_times:
                             continue
 
-                        # "уже наступило" — догоняем даже при задержке цикла
-                        if (now_time.hour, now_time.minute) >= (t.hour, t.minute):
+                        # строго в свою минуту — без "догона" при рестарте
+                        if now_time.hour == t.hour and now_time.minute == t.minute:
                             try:
                                 send_subplot(section, config, sender, plotter, now)
                                 sent_times.add(time_key)
