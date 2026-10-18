@@ -1,4 +1,6 @@
 import configparser
+import io
+import zipfile
 from datetime import datetime, timedelta, timezone
 import re
 import asyncio
@@ -614,7 +616,6 @@ async def cmd_get_raw(message: types.Message):
         )
         return
 
-    # --- лимит ---
     config = read_config()
     max_minutes = get_limit(config, 'max_raw_minutes', 30)
     if minutes > max_minutes:
@@ -633,15 +634,7 @@ async def cmd_get_raw(message: types.Message):
     from_dt = right_dt - timedelta(minutes=minutes)
     time_range_str = f"{from_dt:%Y-%m-%d %H:%M} – {right_dt:%Y-%m-%d %H:%M}"
 
-    # --- глобальные raw-настройки из plot_config.json ---
-    try:
-        raw_plotter = RawPlotConfig()
-        # None — значит качать все колонки; список — если сервер требует fields
-        download_fields = raw_plotter.get_download_fields()
-    except Exception as e:
-        await message.reply(f"❌ Ошибка чтения plot_config.json: {e}")
-        return
-    # ----------------------------------------------------
+    raw_plotter = RawPlotConfig(CONFIG_PATH)
 
     all_sections = [s for s in config.sections() if s.startswith('Factory_')]
     if not all_sections:
@@ -661,13 +654,15 @@ async def cmd_get_raw(message: types.Message):
         name = params.get('msg', section)
 
         try:
+            download_fields = raw_plotter.get_download_fields(section)
+
             parser = Parser(
                 mill_uuid=params.get('milluuid'),
                 host=params.get('host'),
                 port=params.get('port'),
                 from_minutes=0,
                 to_minutes=0,
-                raw_fields=download_fields,   # None → все колонки
+                raw_fields=download_fields,
             )
             parser.set_custom_time_range(from_dt, right_dt)
 
@@ -677,14 +672,12 @@ async def cmd_get_raw(message: types.Message):
 
             await message.reply(f"⏳ Скачиваю сырые данные для {name}...")
 
-            # скачивание в отдельном потоке — event loop не блокируется
             df = await asyncio.to_thread(parser.fetch_raw_data)
 
             if df.empty:
                 await message.reply(f"⚠️ Сырые данные для {name} за {time_range_str} пусты.")
                 continue
 
-            # --- график ---
             saved_path = None
             try:
                 saved_path = await asyncio.to_thread(
@@ -700,9 +693,16 @@ async def cmd_get_raw(message: types.Message):
                     caption=f"RAW [{time_range_str}] {name}",
                 )
 
-            # --- CSV сырых данных (полный, со всеми колонками) ---
             csv_bytes = parser.get_raw_data_csv_bytes()
             csv_name = parser.get_raw_data_csv_filename()
+
+            # Zipping if > 40MB
+            if len(csv_bytes) > 40 * 1024 * 1024:
+                buf = io.BytesIO()
+                with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED, compresslevel=6) as zf:
+                    zf.writestr(csv_name, csv_bytes)
+                csv_bytes = buf.getvalue()
+                csv_name = csv_name + '.zip'
 
             await message.answer_document(
                 BufferedInputFile(csv_bytes, filename=f"{section}__{csv_name}"),
