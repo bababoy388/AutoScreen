@@ -265,9 +265,19 @@ def series_label(series_config: dict[str, Any]) -> str:
     return label
 
 
-def next_color(plt: Any, color_index: int) -> tuple[str, int]:
+def next_color(plt: Any, color_index: int) -> tuple[Any, int]:
     colors = plt.rcParams["axes.prop_cycle"].by_key().get("color", ["C0"])
-    return colors[color_index % len(colors)], color_index + 1
+    color = colors[color_index % len(colors)]
+
+    if isinstance(color, (tuple, list)):
+        if len(color) == 3:
+            color = '#%02x%02x%02x' % tuple(int(round(c * 255)) for c in color)
+        elif len(color) == 4:
+            color = '#%02x%02x%02x%02x' % tuple(int(round(c * 255)) for c in color)
+        else:
+            color = str(color)
+
+    return color, color_index + 1
 
 
 def plot_series_line(
@@ -478,7 +488,7 @@ def make_plot(
                 item["values"],
                 series_config,
                 config,
-                str(color),
+                color,
             )
             lines.append(line)
             line_axes.append((axis, separate_y_axes, spine))
