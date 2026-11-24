@@ -11,6 +11,9 @@ from aiogram.types import FSInputFile, BufferedInputFile
 from core.parser import Parser
 from core.builder_graph import PlotConfig
 from core.tools import log_error
+from core.telegram_sender import TelegramSender
+from core.stop_events import check_and_handle_stop
+
 
 
 config = configparser.ConfigParser()
@@ -969,6 +972,16 @@ async def cmd_get_graph(message: types.Message):
                     BufferedInputFile(csv_bytes, filename=safe_name),
                     caption=f"CSV для {name} за период {time_range_str}"
                 )
+
+            # Проверка остановки — только если окно заканчивается «сейчас»,
+            # иначе для исторического периода данные всегда выглядят «устаревшими»
+            is_live = (datetime.now().astimezone() - right_dt) <= timedelta(minutes=1)
+            if is_live:
+                stop_sender = TelegramSender(TOKEN, message.chat.id)
+                await asyncio.to_thread(
+                    check_and_handle_stop, section, subplot_params, df, stop_sender
+                )
+
         except Exception as e:
             log_error(f"Ошибка при обработке {section}: {e}")
             await message.reply(f"❌ Ошибка при загрузке данных для {section}: {e}")

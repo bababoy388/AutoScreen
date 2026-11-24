@@ -12,6 +12,8 @@ from core.tools import log_error
 from core.bot_polling import dp, bot
 
 from core.raw_process import raw_process_main
+from core.stop_events import check_and_handle_stop
+
 
 
 def get_subplot_schedule(subplot_params, global_config):
@@ -70,11 +72,16 @@ def send_subplot(subplot_section, config, sender, plotter, now):
                 sender.send_document_bytes(
                     csv_bytes,
                     filename=safe_name,
-                    caption=f"CSV {time_range} {caption}"
+                                        caption=f"CSV {time_range} {caption}"
                 )
             except Exception as e:
                 log_error(f"Ошибка отправки CSV для {subplot_section}: {e}")
                 # Не пробрасываем дальше — график уже отправлен
+
+        # Проверка остановки: если мельница стоит и события нет — создаём его
+        # и выгружаем 2 минуты сырых данных до момента остановки
+        check_and_handle_stop(subplot_section, subplot_params, df, sender)
+
 
     except Exception as e:
         log_error(f"Ошибка в send_subplot для {subplot_section}: {e}")
