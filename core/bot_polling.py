@@ -654,15 +654,14 @@ async def cmd_get_raw(message: types.Message):
         name = params.get('msg', section)
 
         try:
-            download_fields = raw_plotter.get_download_fields(section)
-
+                        # Скачиваем ВСЕ поля (DEFAULT_RAW_FIELDS в Parser), чтобы CSV был полным.
+            # График по-прежнему строится только по колонкам из raw_plot_N.
             parser = Parser(
                 mill_uuid=params.get('milluuid'),
                 host=params.get('host'),
                 port=params.get('port'),
                 from_minutes=0,
                 to_minutes=0,
-                raw_fields=download_fields,
             )
             parser.set_custom_time_range(from_dt, right_dt)
 

@@ -49,16 +49,14 @@ def _send_raw(section, config, sender, now, raw_plotter):
     name = params.get('msg', section)
 
     try:
-        # Получаем поля для конкретного завода
-        download_fields = raw_plotter.get_download_fields(section)
-
+                # Скачиваем ВСЕ поля (DEFAULT_RAW_FIELDS в Parser), чтобы CSV был полным.
+        # График по-прежнему строится только по колонкам из raw_plot_N.
         parser = Parser(
             mill_uuid=params.get('milluuid'),
             host=params.get('host'),
             port=params.get('port'),
             from_minutes=int(params.get('raw_from_minutes', '-10')),
             to_minutes=int(params.get('raw_to_minutes', '0')),
-            raw_fields=download_fields,
         )
 
         if not parser.ping():
